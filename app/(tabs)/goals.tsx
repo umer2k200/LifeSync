@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,13 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
 import { Target, TrendingUp, CheckCircle2, X, Edit2 } from 'lucide-react-native';
 import { showError, showConfirmDestructive } from '@/lib/alert';
@@ -46,6 +48,7 @@ export default function GoalsScreen() {
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Personal');
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
@@ -53,10 +56,25 @@ export default function GoalsScreen() {
     }
   }, [user]);
 
+  // Reload goals when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user && !initialLoading) {
+        loadGoals();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user])
+  );
+
   const loadGoals = async () => {
     if (!user) return;
-    const data = await SyncService.fetchWithFallback<Goal>('goals', user.id);
-    setGoals(data);
+    setInitialLoading(true);
+    try {
+      const data = await SyncService.fetchWithFallback<Goal>('goals', user.id);
+      setGoals(data);
+    } finally {
+      setInitialLoading(false);
+    }
   };
 
   const openEditModal = (goal: Goal) => {
@@ -139,7 +157,9 @@ export default function GoalsScreen() {
       />
 
       <ScrollView style={styles.content}>
-        {goals.length === 0 ? (
+        {initialLoading ? (
+          <LoadingSpinner message="Loading goals..." />
+        ) : goals.length === 0 ? (
           <Card style={styles.emptyCard}>
             <Target size={48} color={colors.textSecondary} />
             <Text style={[styles.emptyText, { color: colors.textSecondary }]}>

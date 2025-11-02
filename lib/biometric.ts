@@ -3,7 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BIOMETRIC_ENABLED_KEY = '@lifesync_biometric_enabled';
-const CREDENTIALS_KEY = '@lifesync_credentials';
+const CREDENTIALS_KEY = 'lifesync_credentials';
 
 export interface BiometricCredentials {
   email: string;

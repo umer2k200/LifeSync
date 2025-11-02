@@ -1,15 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
 import { TrendingDown, X, CheckCircle2, Plus, History, ChevronRight } from 'lucide-react-native';
 import { format } from 'date-fns';
 import { showError, showSuccess } from '@/lib/alert';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface Expense {
   id: string;
@@ -52,70 +55,84 @@ export default function ExpensesScreen() {
   const [showCustomCategoryInput, setShowCustomCategoryInput] = useState(false);
   const [loans, setLoans] = useState<Loan[]>([]);
   
-  // Category colors
-  const categoryColors: { [key: string]: string } = {
-    food: '#EF4444',
-    bike: '#F59E0B',
-    petrol: '#6A5ACD',
-    shopping: '#8B5CF6',
-    gym: '#10B981',
-    travel: '#14B8A6',
-    bills: '#F97316',
-    others: '#6B7280',
-  };
-  
-  const defaultCategories = ['food', 'bike', 'petrol', 'shopping', 'gym', 'travel', 'bills', 'others'];
   const [loanModalVisible, setLoanModalVisible] = useState(false);
   const [loanName, setLoanName] = useState('');
   const [loanAmount, setLoanAmount] = useState('');
   const [loanDescription, setLoanDescription] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
-      initializeCategories();
-      loadExpenses();
-      loadLoans();
+      const loadAll = async () => {
+        setLoading(true);
+        try {
+          await Promise.all([loadCategories(), loadExpenses(), loadLoans()]);
+        } finally {
+          setLoading(false);
+        }
+      };
+      loadAll();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const initializeCategories = async () => {
+  // Reload data when screen comes into focus (e.g., returning from expense history)
+  useFocusEffect(
+    useCallback(() => {
+      if (user && !loading) {
+        loadExpenses();
+        loadCategories(true); // Skip cleanup when reloading on focus
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user])
+  );
+
+  const loadCategories = async (skipCleanup = false) => {
     if (!user) return;
     
-    // Load existing categories
-    const existingCategories = await SyncService.fetchWithFallback<ExpenseCategory>('expense_categories', user.id);
-    
-    // Check if all default categories exist
-    const existingNames = existingCategories.map((c) => c.name.toLowerCase());
-    const missingCategories = defaultCategories.filter((name) => !existingNames.includes(name));
-    
-    // Create missing categories
-    if (missingCategories.length > 0) {
-      for (const categoryName of missingCategories) {
-        await SyncService.insertWithFallback('expense_categories', user.id, {
-          name: categoryName,
-          color: categoryColors[categoryName] || '#6B7280',
-        });
-      }
+    // Only remove old hardcoded categories once per user
+    if (!skipCleanup) {
+      await removeHardcodedCategoriesOnce();
     }
     
-    // Reload categories
-    await loadCategories();
+    const data = await SyncService.fetchWithFallback<ExpenseCategory>('expense_categories', user.id);
+    setCategories(data.sort((a, b) => a.name.localeCompare(b.name)));
   };
 
-  const loadCategories = async () => {
+  const removeHardcodedCategoriesOnce = async () => {
     if (!user) return;
-    const data = await SyncService.fetchWithFallback<ExpenseCategory>('expense_categories', user.id);
-    // Sort: default categories first, then custom categories
-    const defaultCategoryList = defaultCategories
-      .map((name) => data.find((c) => c.name.toLowerCase() === name))
-      .filter((c): c is ExpenseCategory => c !== undefined);
     
-    const customCategoryList = data.filter(
-      (c) => !defaultCategories.includes(c.name.toLowerCase())
-    );
+    // Check if cleanup has already been done for this user
+    const cleanupKey = `@lifesync_expense_categories_cleaned_${user.id}`;
+    const alreadyCleaned = await AsyncStorage.getItem(cleanupKey);
     
-    setCategories([...defaultCategoryList, ...customCategoryList]);
+    if (alreadyCleaned === 'true') {
+      // Cleanup already done, skip
+      return;
+    }
+    
+    // List of old hardcoded category names to remove (only once)
+    const hardcodedCategoryNames = ['food', 'bike', 'petrol', 'shopping', 'gym', 'travel', 'bills', 'others'];
+    
+    try {
+      // Get all categories
+      const allCategories = await SyncService.fetchWithFallback<ExpenseCategory>('expense_categories', user.id);
+      
+      // Find and delete hardcoded categories
+      const categoriesToDelete = allCategories.filter((cat) =>
+        hardcodedCategoryNames.includes(cat.name.toLowerCase())
+      );
+      
+      // Delete each hardcoded category
+      for (const category of categoriesToDelete) {
+        await SyncService.deleteWithFallback('expense_categories', user.id, category.id);
+      }
+      
+      // Mark cleanup as done
+      await AsyncStorage.setItem(cleanupKey, 'true');
+    } catch (error) {
+      console.error('Error removing hardcoded categories:', error);
+    }
   };
 
   const createCustomCategory = async () => {
@@ -131,9 +148,9 @@ export default function ExpensesScreen() {
       return;
     }
 
-    // Generate a random color for custom category
-    const colors = ['#EF4444', '#F59E0B', '#6A5ACD', '#8B5CF6', '#10B981', '#14B8A6', '#F97316', '#6B7280', '#EC4899', '#06B6D4'];
-    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    // Generate a random color for custom category using theme-aware colors
+    const colorPalette = ['#EF4444', '#F59E0B', '#6A5ACD', '#8B5CF6', '#10B981', '#14B8A6', '#F97316', '#6B7280', '#EC4899', '#06B6D4'];
+    const randomColor = colorPalette[Math.floor(Math.random() * colorPalette.length)];
 
     const newCategory = await SyncService.insertWithFallback<ExpenseCategory>('expense_categories', user.id, {
       name: customCategoryName.trim(),
@@ -143,9 +160,12 @@ export default function ExpensesScreen() {
     if (newCategory) {
       setCustomCategoryName('');
       setShowCustomCategoryInput(false);
-      await loadCategories();
+      // Add the new category to the state immediately
+      setCategories((prev) => [...prev, newCategory].sort((a, b) => a.name.localeCompare(b.name)));
+      // Select the new category
       setSelectedCategory(newCategory.id);
-      showSuccess('Success', 'Category created!');
+      // Also reload categories to ensure sync with database
+      loadCategories(true);
     }
   };
 
@@ -155,25 +175,35 @@ export default function ExpensesScreen() {
     setExpenses(data.sort((a, b) => new Date(b.expense_date).getTime() - new Date(a.expense_date).getTime()));
   };
 
-  const addExpense = async () => {
-    if (!amount.trim() || !user) return;
-    if (!selectedCategory) {
-      showError('Error', 'Please select a category');
-      return;
-    }
-    
-    await SyncService.insertWithFallback('expenses', user.id, {
-      amount: parseFloat(amount),
-      description: description.trim() || null,
-      expense_date: format(new Date(), 'yyyy-MM-dd'),
-      category_id: selectedCategory,
-    });
+  const closeModal = () => {
     setAmount('');
     setDescription('');
     setSelectedCategory(null);
     setShowCustomCategoryInput(false);
     setCustomCategoryName('');
     setModalVisible(false);
+  };
+
+  const addExpense = async () => {
+    if (!amount.trim() || !user) return;
+    
+    const expenseData: any = {
+      amount: parseFloat(amount),
+      description: description.trim() || null,
+      expense_date: format(new Date(), 'yyyy-MM-dd'),
+    };
+    
+    // Only add category_id if one is selected
+    if (selectedCategory) {
+      expenseData.category_id = selectedCategory;
+    } else {
+      expenseData.category_id = null;
+    }
+    
+    await SyncService.insertWithFallback('expenses', user.id, expenseData);
+    showSuccess('Success', 'Expense added successfully');
+    
+    closeModal();
     loadExpenses();
   };
 
@@ -229,7 +259,11 @@ export default function ExpensesScreen() {
       />
 
       <ScrollView style={styles.content}>
-        <Card style={styles.statCard}>
+        {loading ? (
+          <LoadingSpinner message="Loading expenses..." />
+        ) : (
+          <>
+            <Card style={styles.statCard}>
           <TrendingDown size={24} color={colors.error} />
           <Text style={[styles.statValue, { color: colors.text }]}>Rs. {Math.round(monthlyTotal).toLocaleString()}</Text>
           <Text style={[styles.statLabel, { color: colors.textSecondary }]}>This Month</Text>
@@ -290,6 +324,8 @@ export default function ExpensesScreen() {
         )}
 
         <View style={{ height: 100 }} />
+          </>
+        )}
       </ScrollView>
 
       <Modal visible={modalVisible} animationType="slide" transparent>
@@ -297,7 +333,7 @@ export default function ExpensesScreen() {
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>New Expense</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <TouchableOpacity onPress={closeModal}>
                 <X size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -317,71 +353,88 @@ export default function ExpensesScreen() {
               onChangeText={setDescription}
             />
             
-            <Text style={[styles.inputLabel, { color: colors.text }]}>Category</Text>
-            <View style={styles.categoryContainer}>
-              {categories.map((category) => (
+            <Text style={[styles.inputLabel, { color: colors.text }]}>Category (Optional)</Text>
+            
+            {categories.length === 0 && !showCustomCategoryInput ? (
+              <View style={styles.emptyCategoryContainer}>
+                <Text style={[styles.emptyCategoryText, { color: colors.textSecondary }]}>
+                  No categories yet. Create your first category!
+                </Text>
+                {/* Add Custom Category Button */}
                 <TouchableOpacity
-                  key={category.id}
                   style={[
-                    styles.categoryButton,
+                    styles.addCategoryButton,
                     {
-                      backgroundColor: selectedCategory === category.id
-                        ? category.color || categoryColors[category.name.toLowerCase()] || colors.primary
-                        : colors.surface,
-                      borderColor: selectedCategory === category.id
-                        ? category.color || categoryColors[category.name.toLowerCase()] || colors.primary
-                        : colors.border,
+                      backgroundColor: colors.primary,
+                      marginTop: 12,
                     },
                   ]}
                   onPress={() => {
-                    setSelectedCategory(category.id);
-                    setShowCustomCategoryInput(false);
+                    setShowCustomCategoryInput(true);
+                    setSelectedCategory(null);
                   }}
                 >
-                  <Text
+                  <Plus size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.categoryContainer}>
+                {categories.map((category) => (
+                  <TouchableOpacity
+                    key={category.id}
                     style={[
-                      styles.categoryButtonText,
+                      styles.categoryButton,
                       {
-                        color: selectedCategory === category.id
-                          ? '#FFFFFF'
-                          : colors.text,
+                        backgroundColor: selectedCategory === category.id
+                          ? colors.primary
+                          : colors.surface,
+                        borderColor: selectedCategory === category.id
+                          ? colors.primary
+                          : colors.border,
                       },
                     ]}
+                    onPress={() => {
+                      setSelectedCategory(category.id);
+                      setShowCustomCategoryInput(false);
+                    }}
                   >
-                    {category.name.charAt(0).toUpperCase() + category.name.slice(1)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-              
-              {/* Add Custom Category Button */}
-              <TouchableOpacity
-                style={[
-                  styles.categoryButton,
-                  {
-                    backgroundColor: showCustomCategoryInput ? colors.primary : colors.surface,
-                    borderColor: showCustomCategoryInput ? colors.primary : colors.border,
-                    borderStyle: 'dashed',
-                  },
-                ]}
-                onPress={() => {
-                  setShowCustomCategoryInput(!showCustomCategoryInput);
-                  if (!showCustomCategoryInput) {
-                    setSelectedCategory(null);
-                  }
-                }}
-              >
-                <Text
+                    <Text
+                      style={[
+                        styles.categoryButtonText,
+                        {
+                          color: selectedCategory === category.id
+                            ? '#FFFFFF'
+                            : colors.text,
+                        },
+                      ]}
+                    >
+                      {category.name.charAt(0).toUpperCase() + category.name.slice(1)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                {/* Add Custom Category Button */}
+                <TouchableOpacity
                   style={[
-                    styles.categoryButtonText,
+                    styles.addCategoryButton,
                     {
-                      color: showCustomCategoryInput ? '#FFFFFF' : colors.text,
+                      backgroundColor: showCustomCategoryInput ? colors.error : colors.primary,
                     },
                   ]}
+                  onPress={() => {
+                    setShowCustomCategoryInput(!showCustomCategoryInput);
+                    if (!showCustomCategoryInput) {
+                      setSelectedCategory(null);
+                    }
+                  }}
                 >
-                  {showCustomCategoryInput ? 'Cancel' : '+ Add'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+                  {showCustomCategoryInput ? (
+                    <X size={20} color="#FFFFFF" />
+                  ) : (
+                    <Plus size={20} color="#FFFFFF" />
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
             
             {/* Custom Category Input */}
             {showCustomCategoryInput && (
@@ -542,6 +595,11 @@ const createStyles = (colors: any) =>
       fontSize: 16,
       textAlign: 'center',
     },
+    editButton: {
+      padding: 8,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
     modalOverlay: {
       flex: 1,
       backgroundColor: 'rgba(0,0,0,0.5)',
@@ -581,8 +639,8 @@ const createStyles = (colors: any) =>
       marginBottom: 16,
     },
     categoryButton: {
-      paddingHorizontal: 16,
-      paddingVertical: 10,
+      paddingHorizontal: 6,
+      paddingVertical: 6,
       borderRadius: 8,
       borderWidth: 2,
       minWidth: 80,
@@ -605,5 +663,23 @@ const createStyles = (colors: any) =>
     createCategoryButtonText: {
       fontSize: 16,
       fontWeight: '600',
+    },
+    emptyCategoryContainer: {
+      padding: 16,
+      borderRadius: 12,
+      backgroundColor: colors.surface,
+      marginBottom: 16,
+      alignItems: 'center',
+    },
+    emptyCategoryText: {
+      fontSize: 14,
+      textAlign: 'center',
+    },
+    addCategoryButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
   });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { DrawerActions, useNavigation } from '@react-navigation/native';
+import { DrawerActions, useNavigation, useFocusEffect } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
   Target,
@@ -27,6 +27,7 @@ import {
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/Card';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
 import { format, isPast, parseISO, isToday, subDays, differenceInDays } from 'date-fns';
 
@@ -54,11 +55,12 @@ interface Habit {
 
 export default function HomeScreen() {
   const { colors, isDark } = useTheme();
-  const { user, profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const router = useRouter();
   const navigation = useNavigation();
   const [isOnline, setIsOnline] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<QuickStat[]>([]);
   const [overdueTasks, setOverdueTasks] = useState<Task[]>([]);
   const [habitsNotDone, setHabitsNotDone] = useState<Habit[]>([]);
@@ -73,6 +75,16 @@ export default function HomeScreen() {
     loadStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // Reload stats when screen comes into focus (e.g., returning from other pages)
+  useFocusEffect(
+    useCallback(() => {
+      if (user) {
+        loadStats();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user])
+  );
 
   const getTimeBasedGreeting = () => {
     const hour = new Date().getHours();
@@ -147,6 +159,7 @@ export default function HomeScreen() {
   const loadStats = async () => {
     if (!user) return;
 
+    setLoading(true);
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
       const [
@@ -232,13 +245,15 @@ export default function HomeScreen() {
         {
           icon: DollarSign,
           label: 'This Month',
-          value: `$${monthlyExpenses.toFixed(0)}`,
+          value: `Rs. ${monthlyExpenses.toFixed(0)}`,
           color: colors.error,
           route: '/(tabs)/expenses',
         },
       ]);
     } catch (error) {
       console.error('Error loading stats:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -270,7 +285,9 @@ export default function HomeScreen() {
           </TouchableOpacity>
           <View style={{ flex: 1 }}>
             <Text style={styles.greeting}>{greeting},</Text>
-            <Text style={styles.name}>{profile?.full_name || 'User'}!</Text>
+            <Text style={[styles.name, (authLoading || !profile) && { opacity: 0.7 }]}>
+              {authLoading || !profile ? 'Loading...' : `${profile.full_name || 'User'}!`}
+            </Text>
           </View>
           <View style={styles.headerRight}>
             {!isOnline && (
@@ -292,7 +309,11 @@ export default function HomeScreen() {
         style={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Overview</Text>
+        {loading && !refreshing ? (
+          <LoadingSpinner message="Loading your data..." />
+        ) : (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Quick Overview</Text>
         <View style={styles.statsGrid}>
           {stats.map((stat, index) => (
             <TouchableOpacity
@@ -510,6 +531,8 @@ export default function HomeScreen() {
         </View>
 
         <View style={{ height: 40 }} />
+          </>
+        )}
       </ScrollView>
     </View>
   );

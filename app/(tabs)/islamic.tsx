@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Modal, TextInput, Switch } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/Card';
@@ -11,6 +12,7 @@ import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isTod
 import { showError, showSuccess, showConfirmDestructive, showAlert } from '@/lib/alert';
 import { getHijriDateShort } from '@/lib/hijri';
 import { ScreenHeader } from '@/components/ScreenHeader';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 
 interface QuranProgress {
   id: string;
@@ -78,16 +80,42 @@ export default function IslamicScreen() {
   const [charityEnabled, setCharityEnabled] = useState(false);
   const [charityHour, setCharityHour] = useState('18');
   const [charityMinute, setCharityMinute] = useState('0');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
-      loadTasbeehs();
-      loadQuranProgress();
-      loadCharityReminder();
-      loadPrayerLogs();
+      const loadAll = async () => {
+        setLoading(true);
+        try {
+          await Promise.all([
+            loadTasbeehs(),
+            loadQuranProgress(),
+            loadCharityReminder(),
+            loadPrayerLogs(),
+          ]);
+        } finally {
+          setLoading(false);
+        }
+      };
+      loadAll();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // Reload Islamic data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user && !loading) {
+        Promise.all([
+          loadTasbeehs(),
+          loadQuranProgress(),
+          loadCharityReminder(),
+          loadPrayerLogs(),
+        ]);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user])
+  );
 
   const loadPrayerLogs = async () => {
     if (!user) return;
@@ -576,8 +604,12 @@ export default function IslamicScreen() {
       />
 
       <ScrollView style={styles.content}>
-        {/* Prayer Tracking Section */}
-        <Card style={styles.prayerCard}>
+        {loading ? (
+          <LoadingSpinner message="Loading Islamic features..." />
+        ) : (
+          <>
+            {/* Prayer Tracking Section */}
+            <Card style={styles.prayerCard}>
           <View style={styles.prayerHeader}>
             <Text style={[styles.prayerTitle, { color: colors.text }]}>Daily Prayers</Text>
             <TouchableOpacity onPress={() => setPrayerCalendarVisible(true)}>
@@ -779,6 +811,8 @@ export default function IslamicScreen() {
         </Card>
 
         <View style={{ height: 80 }} />
+          </>
+        )}
       </ScrollView>
 
       {/* Prayer Calendar Modal */}

@@ -19,8 +19,8 @@ LifeSync is a comprehensive mobile application built with React Native (Expo) an
 ### 3. Habits & Fitness Tracker
 - **Daily Habits**: Track habits with streak counters
 - **Water Intake**: Log daily water consumption with quick add buttons
-- **Gym Tracker**: Coming soon - workout logging and progress tracking
-- **Meal Tracker**: Coming soon - nutrition and meal planning
+- **Gym Tracker**: Workout logging and progress tracking with exercise library
+- **Meal Tracker**: Nutrition tracking with calories and macros logging
 
 ### 4. Task Manager
 - Create and organize tasks
@@ -36,8 +36,9 @@ LifeSync is a comprehensive mobile application built with React Native (Expo) an
 
 ### 6. Islamic Section
 - **Tasbeeh Counter**: Digital counter for zikr with save functionality
-- **Quran Progress**: Coming soon - track reading progress
-- **Charity Reminders**: Coming soon - recurring charity reminders
+- **Quran Progress**: Track reading progress with surah/ayah tracking
+- **Charity Reminders**: Recurring charity reminders with notifications
+- **Prayer Tracker**: Daily prayer completion tracking with calendar view
 
 ### 7. Core Features
 - **Authentication**: Simple email/password signup and login
@@ -169,16 +170,14 @@ Toggle in Settings. Theme preference is saved locally.
 
 ## Future Enhancements
 
-Areas marked "Coming soon" in the app:
-- Full gym workout tracker with exercise library
-- Meal planning and nutrition tracking
-- Quran reading progress tracker
-- Charity reminder notifications
-- Push notifications for all reminders
+Potential improvements for future releases:
+- Push notifications for all reminders (infrastructure ready, needs wiring)
 - Friend leaderboards for motivation
 - Export data to CSV/PDF
 - Calendar view for tasks and events
-- Analytics and insights dashboard
+- Analytics and insights dashboard with charts
+- Goal deadlines and reminder notifications
+- Enhanced workout analytics and progress charts
 
 ## Development Notes
 

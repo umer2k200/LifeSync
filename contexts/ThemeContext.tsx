@@ -43,12 +43,14 @@ interface ThemeContextType {
   colors: typeof lightColors;
   toggleTheme: () => void;
   isDark: boolean;
+  loading: boolean;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const [theme, setTheme] = useState<Theme>('light');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadTheme();
@@ -92,6 +94,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       } catch (storageError) {
         console.error('Error loading theme from storage:', storageError);
       }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -176,6 +180,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         colors,
         toggleTheme,
         isDark: theme === 'dark',
+        loading,
       }}
     >
       {children}

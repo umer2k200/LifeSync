@@ -1,11 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
+import { NotificationScheduler } from '@/lib/notificationScheduler';
 import { CheckCircle2, Circle, X, Search, Filter, Calendar, ListTodo, Edit2 } from 'lucide-react-native';
 import { format, isPast, isToday, parseISO } from 'date-fns';
 import { showError, showConfirmDestructive, showSuccess } from '@/lib/alert';
@@ -76,14 +79,32 @@ export default function TasksScreen() {
   const [filterOption, setFilterOption] = useState<FilterOption>('all');
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
-      loadCategories();
-      loadTasks();
+      const loadAll = async () => {
+        setLoading(true);
+        try {
+          await Promise.all([loadCategories(), loadTasks()]);
+        } finally {
+          setLoading(false);
+        }
+      };
+      loadAll();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // Reload tasks when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user && !loading) {
+        Promise.all([loadCategories(), loadTasks()]);
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user])
+  );
 
   const loadCategories = async () => {
     if (!user) return;
@@ -176,6 +197,11 @@ export default function TasksScreen() {
 
     closeModal();
     loadTasks();
+    
+    // Reschedule notifications if task has a due date
+    if (dueDate) {
+      await NotificationScheduler.rescheduleNotifications(user.id);
+    }
   };
 
   const toggleTask = async (taskId: string, completed: boolean) => {
@@ -185,6 +211,9 @@ export default function TasksScreen() {
       completed_at: !completed ? new Date().toISOString() : null,
     });
     loadTasks();
+    
+    // Reschedule notifications since task completion status changed
+    await NotificationScheduler.rescheduleNotifications(user.id);
   };
 
   const deleteTask = async (taskId: string) => {
@@ -192,6 +221,9 @@ export default function TasksScreen() {
     showConfirmDestructive('Delete Task', 'Are you sure you want to delete this task?', async () => {
       await SyncService.deleteWithFallback('tasks', user.id, taskId);
       loadTasks();
+      
+      // Reschedule notifications since task was deleted
+      await NotificationScheduler.rescheduleNotifications(user.id);
     });
   };
 
@@ -400,8 +432,12 @@ export default function TasksScreen() {
       />
 
       <ScrollView style={styles.content}>
-        {/* Statistics */}
-        {totalTasks > 0 && (
+        {loading ? (
+          <LoadingSpinner message="Loading tasks..." />
+        ) : (
+          <>
+            {/* Statistics */}
+            {totalTasks > 0 && (
           <View style={styles.statsContainer}>
             <Card style={styles.statCard}>
               <Text style={[styles.statValue, { color: colors.primary }]}>{totalTasks}</Text>
@@ -573,6 +609,8 @@ export default function TasksScreen() {
           </>
         )}
         <View style={{ height: 80 }} />
+          </>
+        )}
       </ScrollView>
 
       <Modal visible={modalVisible} animationType="slide" transparent>

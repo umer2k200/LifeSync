@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Modal, TextInput } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
 import { CheckCircle2, Circle, Droplet, X, ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react-native';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday } from 'date-fns';
@@ -28,6 +30,7 @@ export default function HabitsScreen() {
   const [editHabitId, setEditHabitId] = useState<string | null>(null);
   const [habitName, setHabitName] = useState('');
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
@@ -35,9 +38,21 @@ export default function HabitsScreen() {
     }
   }, [user]);
 
+  // Reload habits when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user && !loading) {
+        loadData();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user])
+  );
+
   const loadData = async () => {
     if (!user) return;
-    const [habitsData, logsData, allLogsData, waterData] = await Promise.all([
+    setLoading(true);
+    try {
+      const [habitsData, logsData, allLogsData, waterData] = await Promise.all([
       SyncService.fetchWithFallback<Habit>('habits', user.id),
       SyncService.fetchWithFallback('habit_logs', user.id, (q: any) =>
         q.eq('completed_at', format(new Date(), 'yyyy-MM-dd'))
@@ -52,6 +67,9 @@ export default function HabitsScreen() {
     setAllHabitLogs(allLogsData);
     const totalWater = waterData.reduce((sum: number, log: any) => sum + log.amount_ml, 0);
     setWaterIntake(totalWater);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const toggleHabit = async (habitId: string) => {
@@ -185,8 +203,12 @@ export default function HabitsScreen() {
       />
 
       <ScrollView style={styles.content}>
-        {/* Calendar */}
-        <Card style={styles.calendarCard}>
+        {loading ? (
+          <LoadingSpinner message="Loading habits..." />
+        ) : (
+          <>
+            {/* Calendar */}
+            <Card style={styles.calendarCard}>
           <View style={styles.calendarHeader}>
             <TouchableOpacity onPress={() => navigateMonth('prev')}>
               <ChevronLeft size={20} color={colors.text} />
@@ -352,6 +374,8 @@ export default function HabitsScreen() {
         )}
 
         <View style={{ height: 80 }} />
+          </>
+        )}
       </ScrollView>
 
       {/* Add Habit Modal */}

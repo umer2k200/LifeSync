@@ -45,9 +45,9 @@ export class SyncService {
       for (const item of unsyncedItems) {
         const { synced, ...dataToSync } = item;
 
-        const { error } = await supabase
-          .from(tableName)
-          .upsert({ ...dataToSync, synced: true });
+        const { error } = await (supabase
+          .from(tableName) as any)
+          .upsert({ ...dataToSync, synced: true } as any);
 
         if (!error) {
           await OfflineStorage.append(tableName, userId, { ...item, synced: true } as T);
@@ -96,6 +96,7 @@ export class SyncService {
         'quran_progress',
         'tasbeeh_logs',
         'charity_reminders',
+        'push_tokens',
       ];
 
       for (const table of tables) {
@@ -155,7 +156,7 @@ export class SyncService {
 
         if (!error && data) {
           await OfflineStorage.remove(tableName, userId, id);
-          await OfflineStorage.append(tableName, userId, { ...data, synced: true } as T);
+          await OfflineStorage.append(tableName, userId, { ...(data as any), synced: true } as T);
           return data as T;
         }
       } catch (error) {
@@ -182,7 +183,7 @@ export class SyncService {
 
     if (this.isOnline) {
       try {
-        await supabase.from(tableName).update(updates).eq('id', id);
+        await (supabase.from(tableName) as any).update(updates).eq('id', id);
       } catch (error) {
         console.error(`Error updating ${tableName}:`, error);
       }
@@ -198,7 +199,7 @@ export class SyncService {
 
     if (this.isOnline) {
       try {
-        await supabase.from(tableName).delete().eq('id', id);
+        await (supabase.from(tableName) as any).delete().eq('id', id);
       } catch (error) {
         console.error(`Error deleting from ${tableName}:`, error);
       }

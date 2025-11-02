@@ -1,11 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Switch } from 'react-native';
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  Switch,
+  Modal,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
-import { ArrowLeft, Moon, Sun, User, Bell, Database, LogOut, Fingerprint } from 'lucide-react-native';
+import { ArrowLeft, Moon, Sun, User, Bell, Database, Fingerprint, Lock, Eye, EyeOff, X } from 'lucide-react-native';
 import { SyncService } from '@/lib/sync';
 import { NotificationService } from '@/lib/notifications';
 import * as Notifications from 'expo-notifications';
@@ -13,13 +24,17 @@ import { showSuccess, showError, showWarning, showConfirm, showInfo } from '@/li
 import { BiometricService } from '@/lib/biometric';
 
 export default function SettingsScreen() {
-  const { colors, theme, toggleTheme, isDark } = useTheme();
-  const { user, profile, signOut } = useAuth();
+  const { colors, toggleTheme, isDark } = useTheme();
+  const { user, profile, signOut, signIn } = useAuth();
   const router = useRouter();
   const [notificationPermission, setNotificationPermission] = useState<boolean>(false);
   const [biometricAvailable, setBiometricAvailable] = useState<boolean>(false);
   const [biometricEnabled, setBiometricEnabled] = useState<boolean>(false);
   const [biometricType, setBiometricType] = useState<string>('Biometric');
+  const [passwordModalVisible, setPasswordModalVisible] = useState<boolean>(false);
+  const [password, setPassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [passwordLoading, setPasswordLoading] = useState<boolean>(false);
 
   useEffect(() => {
     checkNotificationPermission();
@@ -38,20 +53,27 @@ export default function SettingsScreen() {
   const handleBiometricToggle = async (value: boolean) => {
     try {
       if (value) {
-        // First authenticate to enable biometric
+        // First check if user has credentials saved (from previous login)
+        const credentials = await BiometricService.getCredentials();
+        if (!credentials) {
+          // If user is logged in but has no credentials, show password modal
+          if (user && profile?.email) {
+            setPasswordModalVisible(true);
+            return;
+          } else {
+            // User not logged in
+            showError(
+              'No Credentials',
+              'Please login with email and password first to enable biometric login.',
+            );
+            return;
+          }
+        }
+
+        // Then authenticate to enable biometric
         const authenticated = await BiometricService.authenticate();
         if (!authenticated) {
           showError('Authentication Failed', 'Biometric authentication failed. Please try again.');
-          return;
-        }
-
-        // Check if user has credentials saved (from previous login)
-        const credentials = await BiometricService.getCredentials();
-        if (!credentials) {
-          showError(
-            'No Credentials',
-            'Please login with email and password first to enable biometric login.',
-          );
           return;
         }
 
@@ -69,21 +91,89 @@ export default function SettingsScreen() {
     }
   };
 
+  const handlePasswordSubmit = async () => {
+    if (!password.trim()) {
+      showError('Error', 'Please enter your password');
+      return;
+    }
+
+    if (!user || !profile?.email) {
+      showError('Error', 'User not logged in');
+      return;
+    }
+
+    setPasswordLoading(true);
+    try {
+      // Verify password by attempting to sign in
+      const { error } = await signIn(profile.email, password);
+      if (error) {
+        showError('Invalid Password', 'The password you entered is incorrect. Please try again.');
+        setPasswordLoading(false);
+        return;
+      }
+
+      // Password is correct, save credentials and enable biometric
+      await BiometricService.saveCredentials(profile.email, password);
+
+      // Then authenticate with biometric
+      const authenticated = await BiometricService.authenticate();
+      if (!authenticated) {
+        setPasswordLoading(false);
+        setPasswordModalVisible(false);
+        setPassword('');
+        showError('Authentication Failed', 'Biometric authentication failed. Please try again.');
+        return;
+      }
+
+      await BiometricService.enable();
+      setBiometricEnabled(true);
+      setPasswordLoading(false);
+      setPasswordModalVisible(false);
+      setPassword('');
+      showSuccess('Success', `${biometricType} login enabled!`);
+    } catch (error) {
+      console.error('Error verifying password:', error);
+      showError('Error', 'Failed to verify password');
+      setPasswordLoading(false);
+    }
+  };
+
+  const handlePasswordModalClose = () => {
+    setPasswordModalVisible(false);
+    setPassword('');
+    setShowPassword(false);
+  };
+
   const checkNotificationPermission = async () => {
     const { status } = await Notifications.getPermissionsAsync();
     setNotificationPermission(status === 'granted');
   };
 
   const handleNotificationPermission = async () => {
+    if (!user) {
+      showError('Error', 'Please log in to enable push notifications');
+      return;
+    }
+
     const granted = await NotificationService.requestPermissions();
     setNotificationPermission(granted);
     
     if (granted) {
-      showSuccess('Success', 'Notification permissions granted!');
+      // Register for push notifications
+      const token = await NotificationService.registerForPushNotifications(user.id);
+      if (token) {
+        // Schedule all notifications
+        const { NotificationScheduler } = await import('@/lib/notificationScheduler');
+        await NotificationScheduler.scheduleAllNotifications(user.id);
+        showSuccess('Success', 'Push notifications enabled! You will now receive notifications.');
+      } else {
+        showWarning('Warning', 'Notification permissions granted, but could not register push token. You may need to restart the app.');
+      }
     } else {
       showError('Permission Denied', 'Please enable notifications in your device settings to receive reminders.');
     }
   };
+
 
   const handleSync = async () => {
     if (!SyncService.getConnectionStatus()) {
@@ -209,6 +299,79 @@ export default function SettingsScreen() {
 
         <View style={{ height: 80 }} />
       </ScrollView>
+
+      {/* Password Modal for Enabling Biometric */}
+      <Modal
+        visible={passwordModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={handlePasswordModalClose}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.modalOverlay}
+        >
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                Enable {biometricType} Login
+              </Text>
+              <TouchableOpacity onPress={handlePasswordModalClose} disabled={passwordLoading}>
+                <X size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.modalMessage, { color: colors.textSecondary }]}>
+              Please enter your password to enable {biometricType.toLowerCase()} login. This will
+              save your credentials securely.
+            </Text>
+
+            <View style={[styles.passwordInputContainer, { marginTop: 20 }]}>
+              <Lock size={20} color={colors.textSecondary} style={styles.inputIcon} />
+              <TextInput
+                style={[styles.passwordInput, { color: colors.text }]}
+                placeholder="Password"
+                placeholderTextColor={colors.textSecondary}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!passwordLoading}
+                autoFocus
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeIcon}
+                disabled={passwordLoading}
+              >
+                {showPassword ? (
+                  <EyeOff size={20} color={colors.textSecondary} />
+                ) : (
+                  <Eye size={20} color={colors.textSecondary} />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalButtons}>
+              <Button
+                title="Cancel"
+                onPress={handlePasswordModalClose}
+                variant="outline"
+                disabled={passwordLoading}
+                style={{ ...styles.modalButton, marginRight: 8, borderColor: colors.border }}
+                textStyle={{ color: colors.text }}
+              />
+              <Button
+                title={passwordLoading ? 'Verifying...' : 'Enable'}
+                onPress={handlePasswordSubmit}
+                disabled={passwordLoading || !password.trim()}
+                style={{ ...styles.modalButton, marginLeft: 8 }}
+              />
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -299,5 +462,65 @@ const createStyles = (colors: any) =>
     },
     buttonContainer: {
       marginTop: 24,
+    },
+    modalOverlay: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 20,
+    },
+    modalContent: {
+      width: '100%',
+      maxWidth: 400,
+      borderRadius: 20,
+      padding: 24,
+      backgroundColor: colors.card,
+    },
+    modalHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    modalTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: colors.text,
+    },
+    modalMessage: {
+      fontSize: 14,
+      color: colors.textSecondary,
+      lineHeight: 20,
+    },
+    passwordInputContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: 12,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      backgroundColor: colors.surface,
+      marginBottom: 20,
+    },
+    inputIcon: {
+      marginRight: 12,
+    },
+    passwordInput: {
+      flex: 1,
+      fontSize: 16,
+      color: colors.text,
+    },
+    eyeIcon: {
+      padding: 4,
+    },
+    modalButtons: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginTop: 8,
+    },
+    modalButton: {
+      flex: 1,
     },
   });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,13 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
+import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
 import { showError, showConfirmDestructive, showConfirm } from '@/lib/alert';
 import {
@@ -128,12 +130,23 @@ export default function WorkoutScreen() {
   const [mealProtein, setMealProtein] = useState('0');
   const [mealCarbs, setMealCarbs] = useState('0');
   const [mealFats, setMealFats] = useState('0');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
       loadData();
     }
   }, [user]);
+
+  // Reload workout data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (user && !loading) {
+        loadData();
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [user])
+  );
 
   // Initialize weight when exercise changes
   useEffect(() => {
@@ -147,8 +160,10 @@ export default function WorkoutScreen() {
 
   const loadData = async () => {
     if (!user) return;
-    const [workoutsData, exercisesData, logsData, exerciseLogsData, mealsData] =
-      await Promise.all([
+    setLoading(true);
+    try {
+      const [workoutsData, exercisesData, logsData, exerciseLogsData, mealsData] =
+        await Promise.all([
         SyncService.fetchWithFallback<Workout>('workouts', user.id),
         SyncService.fetchWithFallback<Exercise>('exercises', user.id),
         SyncService.fetchWithFallback<WorkoutLog>('workout_logs', user.id),
@@ -157,11 +172,14 @@ export default function WorkoutScreen() {
           q.order('meal_time', { ascending: false }).limit(50)
         ),
       ]);
-    setWorkouts(workoutsData);
-    setExercises(exercisesData);
-    setWorkoutLogs(logsData);
-    setExerciseLogs(exerciseLogsData);
-    setMeals(mealsData);
+      setWorkouts(workoutsData);
+      setExercises(exercisesData);
+      setWorkoutLogs(logsData);
+      setExerciseLogs(exerciseLogsData);
+      setMeals(mealsData);
+    } finally {
+      setLoading(false);
+    }
   };
 
   // Workout functions
@@ -757,7 +775,9 @@ export default function WorkoutScreen() {
       </View>
 
       <ScrollView style={styles.content}>
-        {activeTab === 'workouts' ? (
+        {loading ? (
+          <LoadingSpinner message="Loading workouts..." />
+        ) : activeTab === 'workouts' ? (
           <>
             {activeWorkout ? (
               <View style={styles.activeWorkoutContainer}>
