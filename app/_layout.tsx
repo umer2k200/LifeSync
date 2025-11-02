@@ -7,6 +7,7 @@ import { ThemeProvider } from '@/contexts/ThemeContext';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SyncService } from '@/lib/sync';
 import { GlobalAlert } from '@/components/StyledAlert';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 function RootLayoutNav() {
   const { user, loading } = useAuth();
@@ -75,10 +76,12 @@ export default function RootLayout() {
   useFrameworkReady();
 
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <RootLayoutNav />
-      </AuthProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AuthProvider>
+          <RootLayoutNav />
+        </AuthProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }
