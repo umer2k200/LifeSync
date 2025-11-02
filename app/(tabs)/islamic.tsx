@@ -2,14 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Modal, TextInput, Switch } from 'react-native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { SyncService } from '@/lib/sync';
 import { NotificationService } from '@/lib/notifications';
-import { BookOpen, Hash, Heart, Plus, X, Edit, Bell } from 'lucide-react-native';
-import { format } from 'date-fns';
+import { BookOpen, Hash, Heart, Plus, X, Edit, Bell, CheckCircle2, Calendar, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday } from 'date-fns';
 import { showError, showSuccess, showConfirmDestructive, showAlert } from '@/lib/alert';
+import { getHijriDateShort } from '@/lib/hijri';
+import { ScreenHeader } from '@/components/ScreenHeader';
 
 interface QuranProgress {
   id: string;
@@ -39,6 +40,14 @@ interface Tasbeeh {
   description?: string;
 }
 
+interface PrayerLog {
+  id: string;
+  prayer_name: string;
+  completed_at: string;
+}
+
+type PrayerName = 'Fajr' | 'Dhuhr' | 'Asr' | 'Maghrib' | 'Isha';
+
 export default function IslamicScreen() {
   const { colors } = useTheme();
   const { user } = useAuth();
@@ -47,6 +56,13 @@ export default function IslamicScreen() {
   const [tasbeehName, setTasbeehName] = useState('');
   const [tasbeehCount, setTasbeehCount] = useState('');
   const [tasbeehDescription, setTasbeehDescription] = useState('');
+  
+  // Prayer tracking
+  const [prayerLogs, setPrayerLogs] = useState<PrayerLog[]>([]);
+  const [allPrayerLogs, setAllPrayerLogs] = useState<PrayerLog[]>([]);
+  const [prayerCalendarVisible, setPrayerCalendarVisible] = useState(false);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  
 
   const [quranProgress, setQuranProgress] = useState<QuranProgress | null>(null);
   const [quranModalVisible, setQuranModalVisible] = useState(false);
@@ -68,8 +84,92 @@ export default function IslamicScreen() {
       loadTasbeehs();
       loadQuranProgress();
       loadCharityReminder();
+      loadPrayerLogs();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  const loadPrayerLogs = async () => {
+    if (!user) return;
+    try {
+      const today = format(new Date(), 'yyyy-MM-dd');
+      const [todayLogs, allLogs] = await Promise.all([
+        SyncService.fetchWithFallback<PrayerLog>('prayer_logs', user.id, (q: any) =>
+          q.eq('completed_at', today)
+        ),
+        SyncService.fetchWithFallback<PrayerLog>('prayer_logs', user.id),
+      ]);
+      setPrayerLogs(todayLogs);
+      setAllPrayerLogs(allLogs);
+    } catch (error) {
+      console.error('Error loading prayer logs:', error);
+    }
+  };
+
+  const togglePrayer = async (prayerName: PrayerName) => {
+    if (!user) return;
+    const today = format(new Date(), 'yyyy-MM-dd');
+    const existing = prayerLogs.find(
+      (log) => log.prayer_name === prayerName && log.completed_at === today
+    );
+
+    if (existing) {
+      await SyncService.deleteWithFallback('prayer_logs', user.id, existing.id);
+    } else {
+      await SyncService.insertWithFallback('prayer_logs', user.id, {
+        prayer_name: prayerName,
+        completed_at: today,
+      });
+    }
+    await loadPrayerLogs();
+  };
+
+  const isPrayerCompleted = (prayerName: PrayerName): boolean => {
+    const today = format(new Date(), 'yyyy-MM-dd');
+    return prayerLogs.some(
+      (log) => log.prayer_name === prayerName && log.completed_at === today
+    );
+  };
+
+  const getCompletedPrayersForDate = (dateStr: string): number => {
+    return allPrayerLogs.filter((log) => log.completed_at === dateStr).length;
+  };
+
+  const getPrayerCalendarDays = () => {
+    const monthStart = startOfMonth(currentMonth);
+    const monthEnd = endOfMonth(currentMonth);
+    const days = eachDayOfInterval({ start: monthStart, end: monthEnd });
+    
+    const firstDay = monthStart.getDay();
+    const paddingDays: Date[] = [];
+    for (let i = 0; i < firstDay; i++) {
+      const date = new Date(monthStart);
+      date.setDate(date.getDate() - firstDay + i);
+      paddingDays.push(date);
+    }
+    
+    return [...paddingDays, ...days];
+  };
+
+  const navigateMonth = (direction: 'prev' | 'next') => {
+    const newDate = new Date(currentMonth);
+    if (direction === 'prev') {
+      newDate.setMonth(newDate.getMonth() - 1);
+    } else {
+      newDate.setMonth(newDate.getMonth() + 1);
+    }
+    setCurrentMonth(newDate);
+  };
+
+  const getPrayerStats = () => {
+    const completedToday = prayerLogs.length;
+    const totalThisMonth = allPrayerLogs.filter((log) => {
+      const logDate = new Date(log.completed_at);
+      return logDate.getMonth() === new Date().getMonth() && logDate.getFullYear() === new Date().getFullYear();
+    }).length;
+    return { completedToday, totalThisMonth };
+  };
+
 
   const loadTasbeehs = async () => {
     if (!user) return;
@@ -103,7 +203,7 @@ export default function IslamicScreen() {
     await loadTasbeehs();
   };
 
-  const _deleteTasbeeh = async (tasbeeh: Tasbeeh) => {
+  const deleteTasbeeh = async (tasbeeh: Tasbeeh) => {
     if (!user) return;
 
     showConfirmDestructive('Delete Tasbeeh', `Are you sure you want to delete "${tasbeeh.name}"?`, async () => {
@@ -455,15 +555,77 @@ export default function IslamicScreen() {
 
   const styles = createStyles(colors);
 
+  const prayers: PrayerName[] = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+  const prayerStats = getPrayerStats();
+  const hijriDate = getHijriDateShort();
+  const calendarDays = getPrayerCalendarDays();
+
   return (
     <View style={styles.container}>
-      <ScreenHeader title="Islamic" subtitle="Spiritual tracking" />
+      <ScreenHeader
+        title="Islamic"
+        subtitle={hijriDate || "Spiritual tracking"}
+        // rightElement={
+        //   hijriDate ? (
+        //     <View style={styles.hijriDateContainer}>
+        //       <Calendar size={16} color={colors.primary} />
+        //       <Text style={[styles.hijriDateText, { color: colors.primary }]}>{hijriDate}</Text>
+        //     </View>
+        //   ) : undefined
+        // }
+      />
 
       <ScrollView style={styles.content}>
+        {/* Prayer Tracking Section */}
+        <Card style={styles.prayerCard}>
+          <View style={styles.prayerHeader}>
+            <Text style={[styles.prayerTitle, { color: colors.text }]}>Daily Prayers</Text>
+            <TouchableOpacity onPress={() => setPrayerCalendarVisible(true)}>
+              <View style={styles.statsButton}>
+                <Calendar size={18} color={colors.primary} />
+                <Text style={[styles.statsText, { color: colors.primary }]}>Stats</Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.prayerCirclesContainer}>
+            {prayers.map((prayer) => {
+              const completed = isPrayerCompleted(prayer);
+              return (
+                <TouchableOpacity
+                  key={prayer}
+                  style={styles.prayerCircleWrapper}
+                  onPress={() => togglePrayer(prayer)}
+                >
+                  <View style={[
+                    styles.prayerCircle,
+                    completed && { backgroundColor: colors.success },
+                    !completed && { borderColor: colors.border, borderWidth: 2 }
+                  ]}>
+                    {completed && <CheckCircle2 size={24} color="#FFFFFF" />}
+                  </View>
+                  <Text style={[styles.prayerName, { color: colors.text }]}>{prayer}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+          
+          <View style={styles.prayerStatsContainer}>
+            <View style={styles.prayerStatItem}>
+              <Text style={[styles.prayerStatValue, { color: colors.primary }]}>{prayerStats.completedToday}/5</Text>
+              <Text style={[styles.prayerStatLabel, { color: colors.textSecondary }]}>Today</Text>
+            </View>
+            <View style={styles.prayerStatItem}>
+              <Text style={[styles.prayerStatValue, { color: colors.primary }]}>{prayerStats.totalThisMonth}</Text>
+              <Text style={[styles.prayerStatLabel, { color: colors.textSecondary }]}>This Month</Text>
+            </View>
+          </View>
+        </Card>
+
         <Card style={styles.tasbeehCard}>
           <View style={styles.tasbeehHeader}>
             <Hash size={24} color={colors.primary} />
-            <Text style={[styles.tasbeehTitle, { color: colors.text }]}>Tasbeeh</Text>
+            <Text style={[styles.tasbeehTitle, { color: colors.text }]}> Zikr</Text>
             <TouchableOpacity
               style={[styles.addTasbeehButton, { backgroundColor: colors.primary }]}
               onPress={() => setTasbeehModalVisible(true)}
@@ -475,7 +637,7 @@ export default function IslamicScreen() {
           {tasbeehs.length === 0 ? (
             <View style={styles.emptyTasbeehContainer}>
               <Text style={[styles.emptyTasbeehText, { color: colors.textSecondary }]}>
-                No tasbeehs yet. Add your first one!
+                No zikr yet. Add your first one!
               </Text>
             </View>
           ) : (
@@ -619,6 +781,109 @@ export default function IslamicScreen() {
         <View style={{ height: 80 }} />
       </ScrollView>
 
+      {/* Prayer Calendar Modal */}
+      <Modal visible={prayerCalendarVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Prayer Stats</Text>
+              <TouchableOpacity onPress={() => setPrayerCalendarVisible(false)}>
+                <X size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <Card style={styles.calendarCard}>
+              <View style={styles.calendarHeader}>
+                <TouchableOpacity onPress={() => navigateMonth('prev')}>
+                  <ChevronLeft size={20} color={colors.text} />
+                </TouchableOpacity>
+                <Text style={[styles.calendarTitle, { color: colors.text }]}>
+                  {format(currentMonth, 'MMMM yyyy')}
+                </Text>
+                <TouchableOpacity onPress={() => navigateMonth('next')}>
+                  <ChevronRight size={20} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.dayLabels}>
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                  <Text key={day} style={[styles.dayLabel, { color: colors.textSecondary }]}>
+                    {day}
+                  </Text>
+                ))}
+              </View>
+              
+              <View style={styles.calendarGrid}>
+                {calendarDays.map((day, index) => {
+                  const dateStr = format(day, 'yyyy-MM-dd');
+                  const completedCount = getCompletedPrayersForDate(dateStr);
+                  const isCurrentMonth = isSameMonth(day, currentMonth);
+                  const isCurrentDay = isToday(day);
+                  const hasCompletion = completedCount > 0;
+                  
+                  return (
+                    <View
+                      key={`${day.getTime()}-${index}`}
+                      style={[
+                        styles.calendarDay,
+                        !isCurrentMonth && styles.calendarDayOtherMonth,
+                        isCurrentDay && { borderWidth: 2, borderColor: colors.primary },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.calendarDayText,
+                          { color: isCurrentMonth ? colors.text : colors.textSecondary },
+                          isCurrentDay && { color: colors.primary, fontWeight: 'bold' },
+                        ]}
+                      >
+                        {day.getDate()}
+                      </Text>
+                      {hasCompletion && (
+                        <View
+                          style={[
+                            styles.completionDot,
+                            {
+                              backgroundColor:
+                                completedCount === 5
+                                  ? colors.success
+                                  : completedCount >= 3
+                                  ? colors.primary
+                                  : colors.warning,
+                            },
+                          ]}
+                        />
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+              
+              <View style={styles.calendarLegend}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: colors.warning }]} />
+                  <Text style={[styles.legendText, { color: colors.textSecondary }]}>
+                    1-2 prayers
+                  </Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: colors.primary }]} />
+                  <Text style={[styles.legendText, { color: colors.textSecondary }]}>
+                    3-4 prayers
+                  </Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: colors.success }]} />
+                  <Text style={[styles.legendText, { color: colors.textSecondary }]}>
+                    5 prayers
+                  </Text>
+                </View>
+              </View>
+            </Card>
+          </View>
+        </View>
+      </Modal>
+
       {/* Quran Progress Modal */}
       <Modal visible={quranModalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
@@ -744,13 +1009,13 @@ export default function IslamicScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Add Tasbeeh</Text>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Add Zikr</Text>
               <TouchableOpacity onPress={() => setTasbeehModalVisible(false)}>
                 <X size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
 
-            <Text style={[styles.inputLabel, { color: colors.text }]}>Tasbeeh Name</Text>
+            <Text style={[styles.inputLabel, { color: colors.text }]}>Zikr Name</Text>
             <TextInput
               style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
               placeholder="e.g., Subhanallah"
@@ -780,7 +1045,7 @@ export default function IslamicScreen() {
               numberOfLines={3}
             />
 
-            <Button title="Add Tasbeeh" onPress={addTasbeeh} />
+            <Button title="Add Zikr" onPress={addTasbeeh} />
           </View>
         </View>
       </Modal>
@@ -794,9 +1059,157 @@ const createStyles = (colors: any) =>
       flex: 1,
       backgroundColor: colors.background,
     },
+    hijriDateContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginLeft: 12,
+    },
+    hijriDateText: {
+      fontSize: 14,
+      fontWeight: '600',
+    },
     content: {
       flex: 1,
       padding: 20,
+    },
+    prayerCard: {
+      marginBottom: 24,
+    },
+    prayerHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    prayerTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+    },
+    statsButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 8,
+      backgroundColor: colors.surface,
+    },
+    statsText: {
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    prayerCirclesContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      marginBottom: 16,
+    },
+    prayerCircleWrapper: {
+      alignItems: 'center',
+      gap: 8,
+    },
+    prayerCircle: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.surface,
+    },
+    prayerName: {
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    prayerStatsContainer: {
+      flexDirection: 'row',
+      justifyContent: 'space-around',
+      paddingTop: 16,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    prayerStatItem: {
+      alignItems: 'center',
+      gap: 4,
+    },
+    prayerStatValue: {
+      fontSize: 24,
+      fontWeight: 'bold',
+    },
+    prayerStatLabel: {
+      fontSize: 12,
+    },
+    calendarCard: {
+      marginBottom: 16,
+    },
+    calendarHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    calendarTitle: {
+      fontSize: 18,
+      fontWeight: 'bold',
+    },
+    dayLabels: {
+      flexDirection: 'row',
+      marginBottom: 8,
+    },
+    dayLabel: {
+      flex: 1,
+      textAlign: 'center',
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    calendarGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 4,
+    },
+    calendarDay: {
+      width: '13%',
+      aspectRatio: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 8,
+      position: 'relative',
+      minHeight: 40,
+    },
+    calendarDayOtherMonth: {
+      opacity: 0.3,
+    },
+    calendarDayText: {
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    completionDot: {
+      position: 'absolute',
+      bottom: 4,
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    calendarLegend: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 16,
+      marginTop: 12,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: colors.border,
+    },
+    legendItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    legendDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+    },
+    legendText: {
+      fontSize: 12,
     },
     tasbeehCard: {
       marginBottom: 24,

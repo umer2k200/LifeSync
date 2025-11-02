@@ -25,6 +25,9 @@ import {
   Trash2,
   TrendingUp,
   Minus,
+  Edit2,
+  History,
+  Award,
 } from 'lucide-react-native';
 import { format } from 'date-fns';
 
@@ -89,16 +92,22 @@ export default function WorkoutScreen() {
 
   // Workout modals
   const [workoutModalVisible, setWorkoutModalVisible] = useState(false);
+  const [editWorkoutId, setEditWorkoutId] = useState<string | null>(null);
   const [workoutName, setWorkoutName] = useState('');
   const [muscleGroup, setMuscleGroup] = useState('');
   const [workoutDescription, setWorkoutDescription] = useState('');
 
   // Exercise modal
   const [exerciseModalVisible, setExerciseModalVisible] = useState(false);
+  const [editExerciseId, setEditExerciseId] = useState<string | null>(null);
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
   const [exerciseName, setExerciseName] = useState('');
   const [exerciseSets, setExerciseSets] = useState('3');
   const [exerciseReps, setExerciseReps] = useState('10');
+  
+  // Exercise history modal
+  const [exerciseHistoryVisible, setExerciseHistoryVisible] = useState(false);
+  const [selectedExerciseId, setSelectedExerciseId] = useState<string | null>(null);
 
   // Active workout session
   const [activeWorkout, setActiveWorkout] = useState<{
@@ -156,21 +165,41 @@ export default function WorkoutScreen() {
   };
 
   // Workout functions
-  const createWorkout = async () => {
+  const openEditWorkoutModal = (workout: Workout) => {
+    setEditWorkoutId(workout.id);
+    setWorkoutName(workout.name);
+    setMuscleGroup(workout.muscle_group || '');
+    setWorkoutDescription(workout.description || '');
+    setWorkoutModalVisible(true);
+  };
+
+  const closeWorkoutModal = () => {
+    setWorkoutModalVisible(false);
+    setEditWorkoutId(null);
+    setWorkoutName('');
+    setMuscleGroup('');
+    setWorkoutDescription('');
+  };
+
+  const saveWorkout = async () => {
     if (!workoutName.trim() || !user) {
       showError('Error', 'Please enter a workout name');
       return;
     }
 
-    await SyncService.insertWithFallback('workouts', user.id, {
+    const workoutData = {
       name: workoutName.trim(),
       muscle_group: muscleGroup.trim() || null,
       description: workoutDescription.trim() || null,
-    });
-    setWorkoutModalVisible(false);
-    setWorkoutName('');
-    setMuscleGroup('');
-    setWorkoutDescription('');
+    };
+
+    if (editWorkoutId) {
+      await SyncService.updateWithFallback('workouts', user.id, editWorkoutId, workoutData);
+    } else {
+      await SyncService.insertWithFallback('workouts', user.id, workoutData);
+    }
+
+    closeWorkoutModal();
     loadData();
   };
 
@@ -184,29 +213,115 @@ export default function WorkoutScreen() {
 
   // Exercise functions
   const openExerciseModal = (workoutId: string) => {
+    setEditExerciseId(null);
     setSelectedWorkoutId(workoutId);
-    setExerciseModalVisible(true);
     setExerciseName('');
     setExerciseSets('3');
     setExerciseReps('10');
-    // Weight will be entered during workout, not when creating exercise
+    setExerciseModalVisible(true);
   };
 
-  const createExercise = async () => {
+  const openEditExerciseModal = (exercise: Exercise) => {
+    setEditExerciseId(exercise.id);
+    setSelectedWorkoutId(exercise.workout_id);
+    setExerciseName(exercise.name);
+    setExerciseSets(exercise.sets.toString());
+    setExerciseReps(exercise.reps.toString());
+    setExerciseModalVisible(true);
+  };
+
+  const closeExerciseModal = () => {
+    setExerciseModalVisible(false);
+    setEditExerciseId(null);
+    setSelectedWorkoutId(null);
+    setExerciseName('');
+    setExerciseSets('3');
+    setExerciseReps('10');
+  };
+
+  const saveExercise = async () => {
     if (!exerciseName.trim() || !selectedWorkoutId || !user) {
       showError('Error', 'Please enter an exercise name');
       return;
     }
 
-    await SyncService.insertWithFallback('exercises', user.id, {
+    const exerciseData = {
       workout_id: selectedWorkoutId,
       name: exerciseName.trim(),
       sets: parseInt(exerciseSets) || 3,
       reps: parseInt(exerciseReps) || 10,
       weight: 0, // Weight will be entered during workout session
-    });
-    setExerciseModalVisible(false);
+    };
+
+    if (editExerciseId) {
+      await SyncService.updateWithFallback('exercises', user.id, editExerciseId, exerciseData);
+    } else {
+      await SyncService.insertWithFallback('exercises', user.id, exerciseData);
+    }
+
+    closeExerciseModal();
     loadData();
+  };
+
+  // Exercise history and PR functions
+  const getExerciseHistory = (exerciseId: string) => {
+    const logs = exerciseLogs.filter((el) => el.exercise_id === exerciseId);
+    const workoutLogIds = new Set(logs.map((el) => el.workout_log_id));
+    const sessions = workoutLogs.filter((wl) => workoutLogIds.has(wl.id));
+    
+    // Group by session
+    const history: Array<{
+      date: string;
+      sets: Array<{ reps: number; weight: number }>;
+      maxWeight: number;
+      totalVolume: number;
+      avgReps: number;
+    }> = [];
+
+    sessions.forEach((session) => {
+      const sessionLogs = logs.filter((el) => el.workout_log_id === session.id);
+      if (sessionLogs.length === 0) return;
+
+      const sets = sessionLogs.map((log) => ({ reps: log.reps, weight: log.weight }));
+      const maxWeight = Math.max(...sets.map((s) => s.weight));
+      const totalVolume = sets.reduce((sum, s) => sum + s.reps * s.weight, 0);
+      const avgReps = sets.reduce((sum, s) => sum + s.reps, 0) / sets.length;
+
+      history.push({
+        date: session.completed_at,
+        sets,
+        maxWeight,
+        totalVolume,
+        avgReps,
+      });
+    });
+
+    return history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  };
+
+  const getExercisePR = (exerciseId: string) => {
+    const history = getExerciseHistory(exerciseId);
+    if (history.length === 0) return null;
+
+    const maxWeight = Math.max(...history.map((h) => h.maxWeight));
+    const maxReps = Math.max(...history.flatMap((h) => h.sets.map((s) => s.reps)));
+    const maxRepsAtWeight = Math.max(
+      ...history.flatMap((h) => h.sets.filter((s) => s.weight === maxWeight).map((s) => s.reps))
+    );
+
+    const prSession = history.find((h) => h.maxWeight === maxWeight);
+
+    return {
+      maxWeight,
+      maxReps,
+      maxRepsAtWeight,
+      prDate: prSession?.date || null,
+    };
+  };
+
+  const openExerciseHistory = (exerciseId: string) => {
+    setSelectedExerciseId(exerciseId);
+    setExerciseHistoryVisible(true);
   };
 
   const deleteExercise = async (exerciseId: string) => {
@@ -562,21 +677,6 @@ export default function WorkoutScreen() {
     return { current, previousBest, improvement: current - previousBest };
   };
 
-  // Build a simple volume series (sum of reps*weight per session) for a workout
-  const getWorkoutVolumeSeries = (workoutId: string, limit: number = 7) => {
-    const logsForWorkout = workoutLogs
-      .filter((log) => log.workout_id === workoutId)
-      .sort((a, b) => new Date(a.completed_at).getTime() - new Date(b.completed_at).getTime());
-
-    const series = logsForWorkout.map((log) => {
-      const sets = exerciseLogs.filter((el) => el.workout_log_id === log.id);
-      const volume = sets.reduce((sum, s) => sum + (Number(s.reps) || 0) * (Number(s.weight) || 0), 0);
-      return { date: log.completed_at, value: volume };
-    });
-
-    return series.slice(-limit);
-  };
-
   const getMaxWeightForExercise = (exerciseId: string) => {
     const logs = exerciseLogs.filter((el) => el.exercise_id === exerciseId);
     if (logs.length === 0) return 0;
@@ -600,67 +700,6 @@ export default function WorkoutScreen() {
 
   const styles = createStyles(colors);
   const todaysStats = getTodaysStats();
-
-  // Inline sparkline component (no external deps)
-  const Sparkline = ({ series }: { series: Array<{ date: string; value: number }> }) => {
-    const { colors } = useTheme();
-    const [width, setWidth] = useState(0);
-    const height = 100;
-    const padding = 8;
-    if (!series || series.length === 0) return null;
-    const maxVal = Math.max(...series.map((p) => p.value), 1);
-    const points = series.map((p, idx) => {
-      const x = width <= 0 ? 0 : padding + (idx * (width - padding * 2)) / Math.max(1, series.length - 1);
-      const y = padding + (height - padding * 2) - ((p.value / maxVal) * (height - padding * 2));
-      return { x, y };
-    });
-
-    return (
-      <View
-        style={[styles.sparkContainer, { height }]}
-        onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
-      >
-        {/* Segments */}
-        {points.map((pt, i) => {
-          if (i === 0) return null;
-          const prev = points[i - 1];
-          const dx = pt.x - prev.x;
-          const dy = pt.y - prev.y;
-          const length = Math.sqrt(dx * dx + dy * dy) || 0;
-          const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-          return (
-            <View
-              key={`seg-${i}`}
-              style={{
-                position: 'absolute',
-                left: prev.x,
-                top: prev.y,
-                width: length,
-                height: 2,
-                backgroundColor: colors.primary,
-                transform: [{ rotateZ: `${angle}deg` }],
-              }}
-            />
-          );
-        })}
-        {/* Dots */}
-        {points.map((pt, i) => (
-          <View
-            key={`dot-${i}`}
-            style={{
-              position: 'absolute',
-              left: pt.x - 3,
-              top: pt.y - 3,
-              width: 6,
-              height: 6,
-              borderRadius: 3,
-              backgroundColor: colors.primary,
-            }}
-          />
-        ))}
-      </View>
-    );
-  };
 
   return (
     <View style={styles.container}>
@@ -987,6 +1026,12 @@ export default function WorkoutScreen() {
                               <Play size={18} color={colors.success} />
                             </TouchableOpacity>
                             <TouchableOpacity
+                              style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
+                              onPress={() => openEditWorkoutModal(workout)}
+                            >
+                              <Edit2 size={18} color={colors.primary} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
                               style={[styles.actionButton, { backgroundColor: colors.error + '20' }]}
                               onPress={() => deleteWorkout(workout.id)}
                             >
@@ -999,20 +1044,36 @@ export default function WorkoutScreen() {
                           <View style={styles.exercisesList}>
                             {workoutExercises.map((exercise) => {
                               const progress = getExerciseProgress(exercise.id);
+                              const pr = getExercisePR(exercise.id);
+                              const history = getExerciseHistory(exercise.id);
+                              
                               return (
                                 <View key={exercise.id} style={styles.exerciseItem}>
-                                  <View style={{ flex: 1 }}>
-                                    <Text style={[styles.exerciseItemName, { color: colors.text }]}>
-                                      {exercise.name}
-                                    </Text>
-                                    <Text style={[styles.exerciseItemDetails, { color: colors.textSecondary }]}>
-                                      {exercise.sets} sets × {exercise.reps} reps
-                                      {(() => {
-                                        const maxW = getMaxWeightForExercise(exercise.id);
-                                        return maxW > 0 ? ` • max: ${maxW}kg` : '';
-                                      })()}
-                                    </Text>
-                                  </View>
+                                  <TouchableOpacity
+                                    style={{ flex: 1 }}
+                                    onPress={() => openExerciseHistory(exercise.id)}
+                                    activeOpacity={0.7}
+                                  >
+                                    <View style={{ flex: 1 }}>
+                                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                        <Text style={[styles.exerciseItemName, { color: colors.text }]}>
+                                          {exercise.name}
+                                        </Text>
+                                        {pr && (
+                                          <View style={[styles.prBadge, { backgroundColor: colors.primary + '20' }]}>
+                                            <Award size={12} color={colors.primary} />
+                                            <Text style={[styles.prBadgeText, { color: colors.primary }]}>
+                                              PR: {pr.maxWeight}kg
+                                            </Text>
+                                          </View>
+                                        )}
+                                      </View>
+                                      <Text style={[styles.exerciseItemDetails, { color: colors.textSecondary }]}>
+                                        {exercise.sets} sets × {exercise.reps} reps
+                                        {history.length > 0 && ` • ${history.length} sessions`}
+                                      </Text>
+                                    </View>
+                                  </TouchableOpacity>
                                   {progress && progress.improvement > 0 && (
                                     <View style={styles.progressBadge}>
                                       <TrendingUp size={14} color={colors.success} />
@@ -1021,31 +1082,25 @@ export default function WorkoutScreen() {
                                       </Text>
                                     </View>
                                   )}
-                                  <TouchableOpacity
-                                    style={[styles.deleteExerciseButton, { backgroundColor: colors.error + '20' }]}
-                                    onPress={() => deleteExercise(exercise.id)}
-                                  >
-                                    <X size={14} color={colors.error} />
-                                  </TouchableOpacity>
+                                  <View style={styles.exerciseActions}>
+                                    <TouchableOpacity
+                                      style={[styles.actionButtonSmall, { backgroundColor: colors.primary + '20' }]}
+                                      onPress={() => openEditExerciseModal(exercise)}
+                                    >
+                                      <Edit2 size={14} color={colors.primary} />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={[styles.actionButtonSmall, { backgroundColor: colors.error + '20' }]}
+                                      onPress={() => deleteExercise(exercise.id)}
+                                    >
+                                      <X size={14} color={colors.error} />
+                                    </TouchableOpacity>
+                                  </View>
                                 </View>
                               );
                             })}
                           </View>
                         )}
-
-                        {/* Progress Line Graph (last 7 sessions total volume) */}
-                        {(() => {
-                          const series = getWorkoutVolumeSeries(workout.id, 7);
-                          if (series.length === 0) return null;
-                          return (
-                            <Card style={{ marginTop: 12 }}>
-                              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text, marginBottom: 8 }}>
-                                Progress (Volume) — last 7 sessions
-                              </Text>
-                              <Sparkline series={series} />
-                            </Card>
-                          );
-                        })()}
 
                         <Button
                           title="Add Exercise"
@@ -1223,8 +1278,10 @@ export default function WorkoutScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>New Workout</Text>
-              <TouchableOpacity onPress={() => setWorkoutModalVisible(false)}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                {editWorkoutId ? 'Edit Workout' : 'New Workout'}
+              </Text>
+              <TouchableOpacity onPress={closeWorkoutModal}>
                 <X size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -1259,7 +1316,7 @@ export default function WorkoutScreen() {
               numberOfLines={3}
             />
 
-            <Button title="Create Workout" onPress={createWorkout} />
+            <Button title={editWorkoutId ? 'Update Workout' : 'Create Workout'} onPress={saveWorkout} />
           </View>
         </View>
       </Modal>
@@ -1269,8 +1326,10 @@ export default function WorkoutScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Add Exercise</Text>
-              <TouchableOpacity onPress={() => setExerciseModalVisible(false)}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                {editExerciseId ? 'Edit Exercise' : 'Add Exercise'}
+              </Text>
+              <TouchableOpacity onPress={closeExerciseModal}>
                 <X size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -1311,7 +1370,7 @@ export default function WorkoutScreen() {
               Note: Weight will be entered during your workout session
             </Text>
 
-            <Button title="Add Exercise" onPress={createExercise} />
+            <Button title={editExerciseId ? 'Update Exercise' : 'Add Exercise'} onPress={saveExercise} />
           </View>
         </View>
       </Modal>
@@ -1386,6 +1445,120 @@ export default function WorkoutScreen() {
             </View>
 
             <Button title="Log Meal" onPress={createMeal} />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Exercise History Modal */}
+      <Modal visible={exerciseHistoryVisible} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Exercise History</Text>
+              <TouchableOpacity onPress={() => setExerciseHistoryVisible(false)}>
+                <X size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView>
+              {(() => {
+                if (!selectedExerciseId) return null;
+                const exercise = exercises.find((e) => e.id === selectedExerciseId);
+                const history = getExerciseHistory(selectedExerciseId);
+                const pr = getExercisePR(selectedExerciseId);
+
+                if (!exercise) {
+                  return <Text style={{ color: colors.textSecondary }}>Exercise not found</Text>;
+                }
+
+                return (
+                  <>
+                    <Text style={[styles.exerciseName, { color: colors.text }]}>{exercise.name}</Text>
+                    
+                    {/* PR Section */}
+                    {pr && (
+                      <Card style={{ marginBottom: 16, padding: 16 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                          <Award size={20} color={colors.primary} />
+                          <Text style={[styles.sectionTitle, { color: colors.text, marginLeft: 8 }]}>
+                            Personal Records
+                          </Text>
+                        </View>
+                        <View style={{ gap: 8 }}>
+                          <View style={styles.prRow}>
+                            <Text style={[styles.prLabel, { color: colors.textSecondary }]}>Max Weight:</Text>
+                            <Text style={[styles.prValue, { color: colors.text }]}>
+                              {pr.maxWeight}kg
+                              {pr.prDate && (
+                                <Text style={[styles.prDate, { color: colors.textSecondary }]}>
+                                  {' '}({format(new Date(pr.prDate), 'MMM dd, yyyy')})
+                                </Text>
+                              )}
+                            </Text>
+                          </View>
+                          <View style={styles.prRow}>
+                            <Text style={[styles.prLabel, { color: colors.textSecondary }]}>Max Reps:</Text>
+                            <Text style={[styles.prValue, { color: colors.text }]}>{pr.maxReps} reps</Text>
+                          </View>
+                          {pr.maxRepsAtWeight > 0 && (
+                            <View style={styles.prRow}>
+                              <Text style={[styles.prLabel, { color: colors.textSecondary }]}>Max Reps @ PR Weight:</Text>
+                              <Text style={[styles.prValue, { color: colors.text }]}>{pr.maxRepsAtWeight} reps</Text>
+                            </View>
+                          )}
+                        </View>
+                      </Card>
+                    )}
+
+                    {/* History Section */}
+                    <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 12 }]}>
+                      Session History ({history.length})
+                    </Text>
+                    {history.length === 0 ? (
+                      <Card style={{ padding: 40, alignItems: 'center' }}>
+                        <History size={48} color={colors.textSecondary} />
+                        <Text style={[styles.emptyText, { color: colors.textSecondary, marginTop: 16 }]}>
+                          No workout sessions yet
+                        </Text>
+                      </Card>
+                    ) : (
+                      <View style={{ gap: 12 }}>
+                        {history.map((session, idx) => (
+                          <Card key={idx} style={{ padding: 16 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }}>
+                              <Text style={[styles.sessionDate, { color: colors.text }]}>
+                                {format(new Date(session.date), 'MMM dd, yyyy HH:mm')}
+                              </Text>
+                              {session.maxWeight === pr?.maxWeight && (
+                                <View style={[styles.prBadge, { backgroundColor: colors.primary + '20' }]}>
+                                  <Award size={12} color={colors.primary} />
+                                  <Text style={[styles.prBadgeText, { color: colors.primary }]}>PR</Text>
+                                </View>
+                              )}
+                            </View>
+                            <View style={{ gap: 4 }}>
+                              {session.sets.map((set, setIdx) => (
+                                <Text key={setIdx} style={[styles.setText, { color: colors.textSecondary }]}>
+                                  Set {setIdx + 1}: {set.reps} reps @ {set.weight}kg
+                                </Text>
+                              ))}
+                            </View>
+                            <View style={{ flexDirection: 'row', gap: 16, marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
+                              <Text style={[styles.statsText, { color: colors.textSecondary }]}>
+                                Max: {session.maxWeight}kg
+                              </Text>
+                              <Text style={[styles.statsText, { color: colors.textSecondary }]}>
+                                Avg Reps: {session.avgReps.toFixed(1)}
+                              </Text>
+                            </View>
+                          </Card>
+                        ))}
+                      </View>
+                    )}
+                  </>
+                );
+              })()}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1565,6 +1738,61 @@ const createStyles = (colors: any) =>
       borderRadius: 6,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+    exerciseActions: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+    },
+    actionButtonSmall: {
+      width: 28,
+      height: 28,
+      borderRadius: 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    prBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 12,
+      gap: 4,
+    },
+    prBadgeText: {
+      fontSize: 11,
+      fontWeight: '600',
+    },
+    exerciseName: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      marginBottom: 16,
+    },
+    prRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    prLabel: {
+      fontSize: 14,
+    },
+    prValue: {
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    prDate: {
+      fontSize: 12,
+      fontWeight: '400',
+    },
+    sessionDate: {
+      fontSize: 14,
+      fontWeight: '600',
+    },
+    setText: {
+      fontSize: 13,
+    },
+    statsText: {
+      fontSize: 12,
     },
     activeWorkoutContainer: {
       gap: 16,
@@ -1782,11 +2010,6 @@ const createStyles = (colors: any) =>
       fontWeight: '600',
       marginTop: 8,
       textAlign: 'center',
-    },
-    sparkContainer: {
-      width: '100%',
-      position: 'relative',
-      paddingBottom: 8,
     },
     logCard: {
       marginBottom: 12,

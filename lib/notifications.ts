@@ -41,7 +41,7 @@ export class NotificationService {
           name: 'Default',
           importance: Notifications.AndroidImportance.HIGH,
           vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#4A90E2',
+          lightColor: '#6A5ACD',
         });
 
         await Notifications.setNotificationChannelAsync('charity', {
@@ -49,7 +49,7 @@ export class NotificationService {
           description: 'Notifications for charity and giving reminders',
           importance: Notifications.AndroidImportance.HIGH,
           vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#4A90E2',
+          lightColor: '#6A5ACD',
           sound: 'default',
         });
       }

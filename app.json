@@ -25,7 +25,9 @@
         "WRITE_EXTERNAL_STORAGE",
         "NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
-        "VIBRATE"
+        "VIBRATE",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
       ]
     },
     "web": {
@@ -38,10 +40,19 @@
       "expo-font",
       "expo-web-browser",
       [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/icon.png",
+          "imageWidth": 1024,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ],
+      [
         "expo-notifications",
         {
           "icon": "./assets/images/icon.png",
-          "color": "#4A90E2"
+          "color": "#6A5ACD"
         }
       ]
     ],

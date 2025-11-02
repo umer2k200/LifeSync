@@ -6,9 +6,9 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { SyncService } from '@/lib/sync';
-import { CheckCircle2, Circle, Droplet, X, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { CheckCircle2, Circle, Droplet, X, ChevronLeft, ChevronRight, Edit2, Trash2 } from 'lucide-react-native';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday } from 'date-fns';
-import { showError } from '@/lib/alert';
+import { showError, showConfirmDestructive } from '@/lib/alert';
 
 interface Habit {
   id: string;
@@ -25,6 +25,7 @@ export default function HabitsScreen() {
   const [allHabitLogs, setAllHabitLogs] = useState<any[]>([]);
   const [waterIntake, setWaterIntake] = useState(0);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editHabitId, setEditHabitId] = useState<string | null>(null);
   const [habitName, setHabitName] = useState('');
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
@@ -78,18 +79,47 @@ export default function HabitsScreen() {
     loadData();
   };
 
-  const addHabit = async () => {
+  const openEditModal = (habit: Habit) => {
+    setEditHabitId(habit.id);
+    setHabitName(habit.name);
+    setModalVisible(true);
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    setEditHabitId(null);
+    setHabitName('');
+  };
+
+  const saveHabit = async () => {
     if (!user) return;
     if (!habitName.trim()) {
       showError('Error', 'Please enter a habit name');
       return;
     }
-    await SyncService.insertWithFallback('habits', user.id, {
-      name: habitName.trim(),
-    });
-    setHabitName('');
-    setModalVisible(false);
+
+    if (editHabitId) {
+      // Update existing habit
+      await SyncService.updateWithFallback('habits', user.id, editHabitId, {
+        name: habitName.trim(),
+      });
+    } else {
+      // Create new habit
+      await SyncService.insertWithFallback('habits', user.id, {
+        name: habitName.trim(),
+      });
+    }
+
+    closeModal();
     loadData();
+  };
+
+  const deleteHabit = async (habitId: string) => {
+    if (!user) return;
+    showConfirmDestructive('Delete Habit', 'Are you sure you want to delete this habit? This will also delete all its logs.', async () => {
+      await SyncService.deleteWithFallback('habits', user.id, habitId);
+      loadData();
+    });
   };
 
   const isHabitCompleted = (habitId: string) => {
@@ -144,7 +174,15 @@ export default function HabitsScreen() {
 
   return (
     <View style={styles.container}>
-      <ScreenHeader title="Habits" subtitle="Track your daily progress" onAddPress={() => setModalVisible(true)} />
+      <ScreenHeader 
+        title="Habits" 
+        subtitle="Track your daily progress" 
+        onAddPress={() => {
+          setEditHabitId(null);
+          setHabitName('');
+          setModalVisible(true);
+        }} 
+      />
 
       <ScrollView style={styles.content}>
         {/* Calendar */}
@@ -272,25 +310,43 @@ export default function HabitsScreen() {
           habits.map((habit) => {
             const completed = isHabitCompleted(habit.id);
             return (
-              <TouchableOpacity key={habit.id} onPress={() => toggleHabit(habit.id)}>
-                <Card style={styles.habitCard}>
-                  <View style={styles.habitContent}>
+              <Card key={habit.id} style={styles.habitCard}>
+                <View style={styles.habitContent}>
+                  <TouchableOpacity onPress={() => toggleHabit(habit.id)} activeOpacity={0.7}>
                     {completed ? (
                       <CheckCircle2 size={28} color={colors.success} />
                     ) : (
                       <Circle size={28} color={colors.border} />
                     )}
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.habitName, { color: colors.text }]}>
-                        {habit.name}
-                      </Text>
-                      <Text style={[styles.habitStreak, { color: colors.textSecondary }]}>
-                        Current: {habit.current_streak} days | Best: {habit.best_streak} days
-                      </Text>
-                    </View>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={{ flex: 1 }}
+                    onPress={() => toggleHabit(habit.id)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.habitName, { color: colors.text }]}>
+                      {habit.name}
+                    </Text>
+                    <Text style={[styles.habitStreak, { color: colors.textSecondary }]}>
+                      Current: {habit.current_streak} days | Best: {habit.best_streak} days
+                    </Text>
+                  </TouchableOpacity>
+                  <View style={styles.habitActions}>
+                    <TouchableOpacity
+                      style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
+                      onPress={() => openEditModal(habit)}
+                    >
+                      <Edit2 size={18} color={colors.primary} />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionButton, { backgroundColor: colors.error + '20' }]}
+                      onPress={() => deleteHabit(habit.id)}
+                    >
+                      <Trash2 size={18} color={colors.error} />
+                    </TouchableOpacity>
                   </View>
-                </Card>
-              </TouchableOpacity>
+                </View>
+              </Card>
             );
           })
         )}
@@ -303,8 +359,10 @@ export default function HabitsScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>New Habit</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                {editHabitId ? 'Edit Habit' : 'New Habit'}
+              </Text>
+              <TouchableOpacity onPress={closeModal}>
                 <X size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -317,7 +375,7 @@ export default function HabitsScreen() {
               onChangeText={setHabitName}
             />
 
-            <Button title="Add Habit" onPress={addHabit} />
+            <Button title={editHabitId ? 'Update Habit' : 'Add Habit'} onPress={saveHabit} />
           </View>
         </View>
       </Modal>
@@ -398,6 +456,18 @@ const createStyles = (colors: any) =>
     },
     habitStreak: {
       fontSize: 13,
+    },
+    habitActions: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+    },
+    actionButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     emptyCard: {
       padding: 40,

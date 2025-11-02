@@ -1,81 +1,86 @@
-import { Tabs } from 'expo-router';
+import { Drawer } from 'expo-router/drawer';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Home, Target, Dumbbell, ListTodo, DollarSign, Moon, Flame } from 'lucide-react-native';
 import { useTheme } from '@/contexts/ThemeContext';
 
-export default function TabLayout() {
+export default function DrawerLayout() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
   return (
-    <Tabs
+    <Drawer
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textSecondary,
-        tabBarStyle: {
+        drawerActiveTintColor: colors.primary,
+        drawerInactiveTintColor: colors.textSecondary,
+        drawerStyle: {
           backgroundColor: colors.card,
-          borderTopColor: colors.border,
-          borderTopWidth: 1,
-          height: 60 + insets.bottom,
-          paddingBottom: Math.max(insets.bottom, 16),
-          paddingTop: 8,
+          width: 280,
         },
-        tabBarLabelStyle: {
-          fontSize: 12,
+        drawerLabelStyle: {
+          fontSize: 16,
           fontWeight: '600',
+        },
+        drawerItemStyle: {
+          borderRadius: 12,
+          marginHorizontal: 8,
+          marginVertical: 2,
+        },
+        drawerContentContainerStyle: {
+          paddingTop: insets.top,
+          paddingBottom: insets.bottom,
         },
       }}
     >
-      <Tabs.Screen
+      <Drawer.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ size, color }) => <Home size={size} color={color} />,
+          drawerIcon: ({ size, color }) => <Home size={size} color={color} />,
         }}
       />
-      <Tabs.Screen
+      <Drawer.Screen
         name="goals"
         options={{
           title: 'Goals',
-          tabBarIcon: ({ size, color }) => <Target size={size} color={color} />,
+          drawerIcon: ({ size, color }) => <Target size={size} color={color} />,
         }}
       />
-      <Tabs.Screen
+      <Drawer.Screen
         name="habits"
         options={{
           title: 'Habits',
-          tabBarIcon: ({ size, color }) => <Flame size={size} color={color} />,
+          drawerIcon: ({ size, color }) => <Flame size={size} color={color} />,
         }}
       />
-      <Tabs.Screen
+      <Drawer.Screen
         name="workout"
         options={{
           title: 'Workout',
-          tabBarIcon: ({ size, color }) => <Dumbbell size={size} color={color} />,
+          drawerIcon: ({ size, color }) => <Dumbbell size={size} color={color} />,
         }}
       />
-      <Tabs.Screen
+      <Drawer.Screen
         name="tasks"
         options={{
           title: 'Tasks',
-          tabBarIcon: ({ size, color }) => <ListTodo size={size} color={color} />,
+          drawerIcon: ({ size, color }) => <ListTodo size={size} color={color} />,
         }}
       />
-      <Tabs.Screen
+      <Drawer.Screen
         name="expenses"
         options={{
           title: 'Expenses',
-          tabBarIcon: ({ size, color }) => <DollarSign size={size} color={color} />,
+          drawerIcon: ({ size, color }) => <DollarSign size={size} color={color} />,
         }}
       />
-      <Tabs.Screen
+      <Drawer.Screen
         name="islamic"
         options={{
           title: 'Islamic',
-          tabBarIcon: ({ size, color }) => <Moon size={size} color={color} />,
+          drawerIcon: ({ size, color }) => <Moon size={size} color={color} />,
         }}
       />
-    </Tabs>
+    </Drawer>
   );
 }

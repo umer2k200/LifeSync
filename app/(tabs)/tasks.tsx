@@ -6,9 +6,9 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { SyncService } from '@/lib/sync';
-import { CheckCircle2, Circle, X, Search, Filter, Calendar, ListTodo } from 'lucide-react-native';
+import { CheckCircle2, Circle, X, Search, Filter, Calendar, ListTodo, Edit2 } from 'lucide-react-native';
 import { format, isPast, isToday, parseISO } from 'date-fns';
-import { showError, showConfirmDestructive } from '@/lib/alert';
+import { showError, showConfirmDestructive, showSuccess } from '@/lib/alert';
 
 interface Task {
   id: string;
@@ -16,8 +16,16 @@ interface Task {
   description: string | null;
   priority: string;
   due_date: string | null;
+  category_id: string | null;
   is_completed: boolean;
   completed_at: string | null;
+}
+
+interface TaskCategory {
+  id: string;
+  name: string;
+  color: string;
+  icon: string;
 }
 
 type SortOption = 'priority' | 'due_date' | 'title' | 'created';
@@ -35,25 +43,85 @@ const PRIORITY_LABELS: Record<string, string> = {
   low: 'Low',
 };
 
+// Category color palette for custom categories
+const CATEGORY_COLOR_PALETTE = [
+  '#6A5ACD',
+  '#10B981',
+  '#8B5CF6',
+  '#EF4444',
+  '#F59E0B',
+  '#6B7280',
+  '#14B8A6',
+  '#EC4899',
+  '#06B6D4',
+  '#F97316',
+];
+
 export default function TasksScreen() {
   const { colors } = useTheme();
   const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [categories, setCategories] = useState<TaskCategory[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editTaskId, setEditTaskId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
   const [dueDate, setDueDate] = useState<string>('');
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [customCategoryName, setCustomCategoryName] = useState('');
+  const [showCustomCategoryInput, setShowCustomCategoryInput] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortOption, setSortOption] = useState<SortOption>('priority');
   const [filterOption, setFilterOption] = useState<FilterOption>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     if (user) {
+      loadCategories();
       loadTasks();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  const loadCategories = async () => {
+    if (!user) return;
+    const data = await SyncService.fetchWithFallback<TaskCategory>('task_categories', user.id);
+    // Sort by name alphabetically
+    setCategories(data.sort((a, b) => a.name.localeCompare(b.name)));
+  };
+
+  const createCustomCategory = async () => {
+    if (!customCategoryName.trim() || !user) {
+      showError('Error', 'Please enter a category name');
+      return;
+    }
+
+    // Check if category already exists
+    const existing = categories.find((c) => c.name.toLowerCase() === customCategoryName.trim().toLowerCase());
+    if (existing) {
+      showError('Error', 'Category already exists');
+      return;
+    }
+
+    // Generate a random color for custom category
+    const randomColor = CATEGORY_COLOR_PALETTE[Math.floor(Math.random() * CATEGORY_COLOR_PALETTE.length)];
+
+    const newCategory = await SyncService.insertWithFallback<TaskCategory>('task_categories', user.id, {
+      name: customCategoryName.trim(),
+      color: randomColor,
+      icon: 'folder',
+    });
+
+    if (newCategory) {
+      setCustomCategoryName('');
+      setShowCustomCategoryInput(false);
+      await loadCategories();
+      setSelectedCategory(newCategory.id);
+      showSuccess('Success', 'Category created!');
+    }
+  };
 
   const loadTasks = async () => {
     if (!user) return;
@@ -61,24 +129,52 @@ export default function TasksScreen() {
     setTasks(data);
   };
 
-  const addTask = async () => {
+  const openEditModal = (task: Task) => {
+    setEditTaskId(task.id);
+    setTitle(task.title);
+    setDescription(task.description || '');
+    setPriority(task.priority);
+    setDueDate(task.due_date ? format(parseISO(task.due_date), 'yyyy-MM-dd') : '');
+    setSelectedCategory(task.category_id);
+    setModalVisible(true);
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    setEditTaskId(null);
+    setTitle('');
+    setDescription('');
+    setPriority('medium');
+    setDueDate('');
+    setSelectedCategory(null);
+  };
+
+  const saveTask = async () => {
     if (!title.trim() || !user) {
       showError('Error', 'Please enter a task title');
       return;
     }
 
-    await SyncService.insertWithFallback('tasks', user.id, {
+    const taskData = {
       title: title.trim(),
       description: description.trim() || null,
       priority,
       due_date: dueDate ? new Date(dueDate).toISOString() : null,
-      is_completed: false,
-    });
-    setTitle('');
-    setDescription('');
-    setPriority('medium');
-    setDueDate('');
-    setModalVisible(false);
+      category_id: selectedCategory,
+    };
+
+    if (editTaskId) {
+      // Update existing task
+      await SyncService.updateWithFallback('tasks', user.id, editTaskId, taskData);
+    } else {
+      // Create new task
+      await SyncService.insertWithFallback('tasks', user.id, {
+        ...taskData,
+        is_completed: false,
+      });
+    }
+
+    closeModal();
     loadTasks();
   };
 
@@ -130,6 +226,11 @@ export default function TasksScreen() {
         break;
     }
 
+    // Apply category filter
+    if (categoryFilter) {
+      filtered = filtered.filter((t) => t.category_id === categoryFilter);
+    }
+
     // Apply sorting
     filtered.sort((a, b) => {
       switch (sortOption) {
@@ -165,6 +266,18 @@ export default function TasksScreen() {
 
   const styles = createStyles(colors);
 
+  const getCategoryName = (categoryId: string | null | undefined): string => {
+    if (!categoryId) return '';
+    const category = categories.find((c) => c.id === categoryId);
+    return category ? category.name : '';
+  };
+
+  const getCategoryColor = (categoryId: string | null | undefined): string => {
+    if (!categoryId) return colors.textSecondary;
+    const category = categories.find((c) => c.id === categoryId);
+    return category ? category.color : colors.textSecondary;
+  };
+
   const renderTaskCard = (task: Task) => {
     let isOverdue = false;
     let isDueToday = false;
@@ -182,72 +295,91 @@ export default function TasksScreen() {
       }
     }
 
+    const categoryName = getCategoryName(task.category_id);
+    const categoryColor = getCategoryColor(task.category_id);
+
     return (
-      <TouchableOpacity key={task.id} onPress={() => toggleTask(task.id, task.is_completed)}>
-        <Card style={[styles.taskCard, isOverdue && styles.overdueCard] as any}>
-          <View style={styles.taskContent}>
+      <Card key={task.id} style={[styles.taskCard, isOverdue && styles.overdueCard] as any}>
+        <View style={styles.taskContent}>
+          <TouchableOpacity onPress={() => toggleTask(task.id, task.is_completed)}>
             {task.is_completed ? (
               <CheckCircle2 size={24} color={colors.success} />
             ) : (
               <Circle size={24} color={colors.border} />
             )}
-            <View style={styles.taskDetails}>
-              <View style={styles.taskHeader}>
-                <Text
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.taskDetails}
+            onPress={() => toggleTask(task.id, task.is_completed)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.taskHeader}>
+              <Text
+                style={[
+                  styles.taskTitle,
+                  task.is_completed && styles.completedTask,
+                  { color: task.is_completed ? colors.textSecondary : colors.text },
+                ]}
+              >
+                {task.title}
+              </Text>
+            </View>
+            {task.description && (
+              <Text style={[styles.taskDescription, { color: colors.textSecondary }]}>
+                {task.description}
+              </Text>
+            )}
+            <View style={styles.taskFooter}>
+              <View style={styles.badgeContainer}>
+                <View
                   style={[
-                    styles.taskTitle,
-                    task.is_completed && styles.completedTask,
-                    { color: task.is_completed ? colors.textSecondary : colors.text },
+                    styles.priorityBadge,
+                    { backgroundColor: PRIORITY_COLORS[task.priority] || PRIORITY_COLORS.medium },
                   ]}
                 >
-                  {task.title}
-                </Text>
-                <TouchableOpacity
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    deleteTask(task.id);
-                  }}
-                  style={styles.deleteButton}
-                >
-                  <X size={18} color={colors.error} />
-                </TouchableOpacity>
-              </View>
-              {task.description && (
-                <Text style={[styles.taskDescription, { color: colors.textSecondary }]}>
-                  {task.description}
-                </Text>
-              )}
-              <View style={styles.taskFooter}>
-                <View style={styles.badgeContainer}>
-                  <View
-                    style={[
-                      styles.priorityBadge,
-                      { backgroundColor: PRIORITY_COLORS[task.priority] || PRIORITY_COLORS.medium },
-                    ]}
-                  >
-                    <Text style={styles.priorityText}>
-                      {PRIORITY_LABELS[task.priority] || 'Medium'}
+                  <Text style={styles.priorityText}>
+                    {PRIORITY_LABELS[task.priority] || 'Medium'}
+                  </Text>
+                </View>
+                {categoryName && (
+                  <View style={[styles.categoryBadge, { backgroundColor: categoryColor + '20', borderColor: categoryColor }]}>
+                    <Text style={[styles.categoryBadgeText, { color: categoryColor }]}>
+                      {categoryName}
                     </Text>
                   </View>
-                  {task.due_date && formattedDate && (
-                    <View style={[styles.dueDateBadge, isOverdue && { backgroundColor: colors.error }] as any}>
-                      <Calendar size={12} color={isOverdue ? '#fff' : colors.textSecondary} />
-                      <Text
-                        style={[
-                          styles.dueDateText,
-                          { color: isOverdue ? '#fff' : colors.textSecondary },
-                        ]}
-                      >
-                        {isDueToday ? 'Today' : isOverdue ? 'Overdue' : formattedDate}
-                      </Text>
-                    </View>
-                  )}
-                </View>
+                )}
+                {task.due_date && formattedDate && (
+                  <View style={[styles.dueDateBadge, isOverdue && { backgroundColor: colors.error }] as any}>
+                    <Calendar size={12} color={isOverdue ? '#fff' : colors.textSecondary} />
+                    <Text
+                      style={[
+                        styles.dueDateText,
+                        { color: isOverdue ? '#fff' : colors.textSecondary },
+                      ]}
+                    >
+                      {isDueToday ? 'Today' : isOverdue ? 'Overdue' : formattedDate}
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
+          </TouchableOpacity>
+          <View style={styles.taskActions}>
+            <TouchableOpacity
+              onPress={() => openEditModal(task)}
+              style={styles.editButton}
+            >
+              <Edit2 size={18} color={colors.primary} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => deleteTask(task.id)}
+              style={styles.deleteButton}
+            >
+              <X size={18} color={colors.error} />
+            </TouchableOpacity>
           </View>
-        </Card>
-      </TouchableOpacity>
+        </View>
+      </Card>
     );
   };
 
@@ -256,7 +388,15 @@ export default function TasksScreen() {
       <ScreenHeader
         title="Tasks"
         subtitle={`${activeTasks.length} active tasks${overdueCount > 0 ? ` • ${overdueCount} overdue` : ''}`}
-        onAddPress={() => setModalVisible(true)}
+        onAddPress={() => {
+          setEditTaskId(null);
+          setTitle('');
+          setDescription('');
+          setPriority('medium');
+          setDueDate('');
+          setSelectedCategory(null);
+          setModalVisible(true);
+        }}
       />
 
       <ScrollView style={styles.content}>
@@ -337,6 +477,46 @@ export default function TasksScreen() {
               </View>
             </View>
             <View style={styles.filterRow}>
+              <Text style={[styles.filterLabel, { color: colors.text }]}>Category:</Text>
+              <View style={styles.filterOptions}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterOption,
+                    !categoryFilter && { backgroundColor: colors.primary },
+                  ]}
+                  onPress={() => setCategoryFilter(null)}
+                >
+                  <Text
+                    style={[
+                      styles.filterOptionText,
+                      { color: !categoryFilter ? '#fff' : colors.text },
+                    ]}
+                  >
+                    All
+                  </Text>
+                </TouchableOpacity>
+                {categories.map((category) => (
+                  <TouchableOpacity
+                    key={category.id}
+                    style={[
+                      styles.filterOption,
+                      categoryFilter === category.id && { backgroundColor: category.color },
+                    ]}
+                    onPress={() => setCategoryFilter(categoryFilter === category.id ? null : category.id)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterOptionText,
+                        { color: categoryFilter === category.id ? '#fff' : colors.text },
+                      ]}
+                    >
+                      {category.name}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+            <View style={styles.filterRow}>
               <Text style={[styles.filterLabel, { color: colors.text }]}>Sort:</Text>
               <View style={styles.filterOptions}>
                 {(['priority', 'due_date', 'title'] as SortOption[]).map((option) => (
@@ -399,8 +579,10 @@ export default function TasksScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>New Task</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                {editTaskId ? 'Edit Task' : 'New Task'}
+              </Text>
+              <TouchableOpacity onPress={closeModal}>
                 <X size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -427,6 +609,102 @@ export default function TasksScreen() {
                 multiline
                 numberOfLines={3}
               />
+
+              {/* Category Selector */}
+              <View style={styles.categoryContainer}>
+                <Text style={[styles.label, { color: colors.text }]}>Category (optional)</Text>
+                <View style={styles.categoryOptions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.categoryOption,
+                      !selectedCategory && { backgroundColor: colors.primary },
+                      { borderColor: colors.border },
+                    ]}
+                    onPress={() => setSelectedCategory(null)}
+                  >
+                    <Text
+                      style={[
+                        styles.categoryOptionText,
+                        { color: !selectedCategory ? '#fff' : colors.text },
+                      ]}
+                    >
+                      None
+                    </Text>
+                  </TouchableOpacity>
+                  {categories.map((category) => (
+                    <TouchableOpacity
+                      key={category.id}
+                      style={[
+                        styles.categoryOption,
+                        selectedCategory === category.id && { backgroundColor: category.color },
+                        { borderColor: colors.border },
+                      ]}
+                      onPress={() => {
+                        setSelectedCategory(selectedCategory === category.id ? null : category.id);
+                        setShowCustomCategoryInput(false);
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryOptionText,
+                          { color: selectedCategory === category.id ? '#fff' : colors.text },
+                        ]}
+                      >
+                        {category.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                  
+                  {/* Add Custom Category Button */}
+                  <TouchableOpacity
+                    style={[
+                      styles.categoryOption,
+                      {
+                        backgroundColor: showCustomCategoryInput ? colors.primary : colors.surface,
+                        borderColor: showCustomCategoryInput ? colors.primary : colors.border,
+                        borderStyle: 'dashed',
+                      },
+                    ]}
+                    onPress={() => {
+                      setShowCustomCategoryInput(!showCustomCategoryInput);
+                      if (!showCustomCategoryInput) {
+                        setSelectedCategory(null);
+                      }
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.categoryOptionText,
+                        { color: showCustomCategoryInput ? '#fff' : colors.text },
+                      ]}
+                    >
+                      {showCustomCategoryInput ? 'Cancel' : '+ Add'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                
+                {/* Custom Category Input */}
+                {showCustomCategoryInput && (
+                  <View style={styles.customCategoryContainer}>
+                    <TextInput
+                      style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
+                      placeholder="Category name"
+                      placeholderTextColor={colors.textSecondary}
+                      value={customCategoryName}
+                      onChangeText={setCustomCategoryName}
+                      autoFocus
+                    />
+                    <TouchableOpacity
+                      style={[styles.createCategoryButton, { backgroundColor: colors.primary }]}
+                      onPress={createCustomCategory}
+                    >
+                      <Text style={[styles.createCategoryButtonText, { color: '#FFFFFF' }]}>
+                        Create Category
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
 
               {/* Priority Selector */}
               <View style={styles.priorityContainer}>
@@ -483,7 +761,7 @@ export default function TasksScreen() {
                 )}
               </View>
 
-              <Button title="Add Task" onPress={addTask} />
+              <Button title={editTaskId ? 'Update Task' : 'Add Task'} onPress={saveTask} />
             </ScrollView>
           </View>
         </View>
@@ -652,6 +930,24 @@ const createStyles = (colors: any) =>
       fontSize: 11,
       fontWeight: '500',
     },
+    categoryBadge: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 12,
+      borderWidth: 1,
+    },
+    categoryBadgeText: {
+      fontSize: 11,
+      fontWeight: '600',
+    },
+    taskActions: {
+      flexDirection: 'row',
+      gap: 8,
+      alignItems: 'center',
+    },
+    editButton: {
+      padding: 4,
+    },
     deleteButton: {
       padding: 4,
     },
@@ -740,5 +1036,39 @@ const createStyles = (colors: any) =>
       fontSize: 12,
       marginTop: 4,
       marginLeft: 4,
+    },
+    categoryContainer: {
+      marginBottom: 20,
+    },
+    categoryOptions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    categoryOption: {
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderRadius: 12,
+      borderWidth: 2,
+      minWidth: 80,
+    },
+    categoryOptionText: {
+      fontSize: 14,
+      fontWeight: '600',
+      textAlign: 'center',
+    },
+    customCategoryContainer: {
+      marginTop: 12,
+      marginBottom: 16,
+    },
+    createCategoryButton: {
+      paddingVertical: 12,
+      paddingHorizontal: 20,
+      borderRadius: 8,
+      alignItems: 'center',
+    },
+    createCategoryButtonText: {
+      fontSize: 16,
+      fontWeight: '600',
     },
   });

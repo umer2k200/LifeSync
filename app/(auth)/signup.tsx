@@ -9,9 +9,11 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Mail, Lock, Eye, EyeOff, User } from 'lucide-react-native';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { showError, showSuccess } from '@/lib/alert';
@@ -21,10 +23,43 @@ export default function SignUpScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+  const [confirmPasswordError, setConfirmPasswordError] = useState('');
   const [loading, setLoading] = useState(false);
   const { signUp } = useAuth();
   const { colors } = useTheme();
   const router = useRouter();
+
+  const validateEmail = (emailValue: string) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (emailValue.trim() && !emailRegex.test(emailValue.trim())) {
+      setEmailError('Please enter a valid email address');
+      return false;
+    }
+    setEmailError('');
+    return true;
+  };
+
+  const validatePassword = (passwordValue: string) => {
+    if (passwordValue.length > 0 && passwordValue.length < 6) {
+      setPasswordError('Password must be at least 6 characters');
+      return false;
+    }
+    setPasswordError('');
+    return true;
+  };
+
+  const validateConfirmPassword = (confirmPasswordValue: string) => {
+    if (confirmPasswordValue.length > 0 && confirmPasswordValue !== password) {
+      setConfirmPasswordError('Passwords do not match');
+      return false;
+    }
+    setConfirmPasswordError('');
+    return true;
+  };
 
   const handleSignUp = async () => {
     // Simple validation
@@ -33,13 +68,20 @@ export default function SignUpScreen() {
       return;
     }
 
-    if (password !== confirmPassword) {
-      showError('Error', 'Passwords do not match');
+    if (!validateEmail(email)) {
       return;
     }
 
-    if (password.length < 6) {
-      showError('Error', 'Password must be at least 6 characters');
+    if (!validatePassword(password)) {
+      return;
+    }
+
+    if (!validateConfirmPassword(confirmPassword)) {
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      showError('Error', 'Passwords do not match');
       return;
     }
 
@@ -72,53 +114,114 @@ export default function SignUpScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.content}>
+            <View style={styles.logoContainer}>
+              <Image source={require('@/assets/images/icon.png')} style={styles.logo} />
+            </View>
             <Text style={styles.title}>Create Account</Text>
             <Text style={styles.subtitle}>Join LifeSync today</Text>
 
             <View style={styles.form}>
-              <TextInput
-                style={styles.input}
-                placeholder="Full Name"
-                placeholderTextColor={colors.textSecondary}
-                value={fullName}
-                onChangeText={setFullName}
-                autoCapitalize="words"
-                editable={!loading}
-              />
+              <View style={styles.inputContainer}>
+                <User size={20} color={colors.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Full Name"
+                  placeholderTextColor={colors.textSecondary}
+                  value={fullName}
+                  onChangeText={setFullName}
+                  autoCapitalize="words"
+                  editable={!loading}
+                />
+              </View>
 
-              <TextInput
-                style={[styles.input, { marginTop: 16 }]}
-                placeholder="Email"
-                placeholderTextColor={colors.textSecondary}
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!loading}
-              />
+              <View style={[styles.inputContainer, { marginTop: 16 }]}>
+                <Mail size={20} color={colors.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.input, emailError && styles.inputError]}
+                  placeholder="Email"
+                  placeholderTextColor={colors.textSecondary}
+                  value={email}
+                  onChangeText={(text) => {
+                    setEmail(text);
+                    if (emailError && text.trim()) {
+                      validateEmail(text);
+                    }
+                  }}
+                  onBlur={() => validateEmail(email)}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!loading}
+                />
+              </View>
+              {emailError ? <Text style={styles.errorText}>{emailError}</Text> : null}
 
-              <TextInput
-                style={[styles.input, { marginTop: 16 }]}
-                placeholder="Password"
-                placeholderTextColor={colors.textSecondary}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoCapitalize="none"
-                editable={!loading}
-              />
+              <View style={[styles.inputContainer, { marginTop: 16 }]}>
+                <Lock size={20} color={colors.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.input, passwordError && styles.inputError]}
+                  placeholder="Password"
+                  placeholderTextColor={colors.textSecondary}
+                  value={password}
+                  onChangeText={(text) => {
+                    setPassword(text);
+                    validatePassword(text);
+                    if (confirmPassword && text !== confirmPassword) {
+                      setConfirmPasswordError('Passwords do not match');
+                    } else {
+                      setConfirmPasswordError('');
+                    }
+                  }}
+                  onBlur={() => validatePassword(password)}
+                  secureTextEntry={!showPassword}
+                  autoCapitalize="none"
+                  editable={!loading}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPassword(!showPassword)}
+                  style={styles.eyeIcon}
+                  disabled={loading}
+                >
+                  {showPassword ? (
+                    <EyeOff size={20} color={colors.textSecondary} />
+                  ) : (
+                    <Eye size={20} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+              </View>
+              {passwordError ? <Text style={styles.errorText}>{passwordError}</Text> : null}
 
-              <TextInput
-                style={[styles.input, { marginTop: 16 }]}
-                placeholder="Confirm Password"
-                placeholderTextColor={colors.textSecondary}
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                secureTextEntry
-                autoCapitalize="none"
-                editable={!loading}
-              />
+              <View style={[styles.inputContainer, { marginTop: 16 }]}>
+                <Lock size={20} color={colors.textSecondary} style={styles.inputIcon} />
+                <TextInput
+                  style={[styles.input, confirmPasswordError && styles.inputError]}
+                  placeholder="Confirm Password"
+                  placeholderTextColor={colors.textSecondary}
+                  value={confirmPassword}
+                  onChangeText={(text) => {
+                    setConfirmPassword(text);
+                    validateConfirmPassword(text);
+                  }}
+                  onBlur={() => validateConfirmPassword(confirmPassword)}
+                  secureTextEntry={!showConfirmPassword}
+                  autoCapitalize="none"
+                  editable={!loading}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                  style={styles.eyeIcon}
+                  disabled={loading}
+                >
+                  {showConfirmPassword ? (
+                    <EyeOff size={20} color={colors.textSecondary} />
+                  ) : (
+                    <Eye size={20} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+              </View>
+              {confirmPasswordError ? (
+                <Text style={styles.errorText}>{confirmPasswordError}</Text>
+              ) : null}
 
               <TouchableOpacity
                 style={[styles.button, loading && { opacity: 0.6 }]}
@@ -183,14 +286,45 @@ const createStyles = (colors: any) =>
       borderRadius: 16,
       padding: 24,
     },
-    input: {
+    logoContainer: {
+      alignItems: 'center',
+      marginBottom: 24,
+    },
+    logo: {
+      width: 80,
+      height: 80,
+      borderRadius: 20,
+    },
+    inputContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
       backgroundColor: colors.surface,
       borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    inputIcon: {
+      marginLeft: 16,
+    },
+    input: {
+      flex: 1,
       padding: 16,
       fontSize: 16,
       color: colors.text,
-      borderWidth: 1,
-      borderColor: colors.border,
+      paddingLeft: 12,
+    },
+    inputError: {
+      borderColor: colors.error,
+    },
+    eyeIcon: {
+      marginRight: 16,
+      padding: 4,
+    },
+    errorText: {
+      color: colors.error,
+      fontSize: 12,
+      marginTop: 4,
+      marginLeft: 4,
     },
     button: {
       backgroundColor: colors.primary,

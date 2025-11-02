@@ -14,7 +14,7 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { SyncService } from '@/lib/sync';
-import { Target, TrendingUp, CheckCircle2, X } from 'lucide-react-native';
+import { Target, TrendingUp, CheckCircle2, X, Edit2 } from 'lucide-react-native';
 import { showError, showConfirmDestructive } from '@/lib/alert';
 
 interface Goal {
@@ -29,7 +29,7 @@ interface Goal {
 
 const CATEGORIES = ['Personal', 'Fitness', 'Career', 'Spiritual', 'Financial'];
 const CATEGORY_COLORS: Record<string, string> = {
-  Personal: '#3B82F6',
+  Personal: '#6A5ACD',
   Fitness: '#10B981',
   Career: '#8B5CF6',
   Spiritual: '#14B8A6',
@@ -41,6 +41,7 @@ export default function GoalsScreen() {
   const { user } = useAuth();
   const [goals, setGoals] = useState<Goal[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
+  const [editGoalId, setEditGoalId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Personal');
@@ -58,25 +59,49 @@ export default function GoalsScreen() {
     setGoals(data);
   };
 
-  const addGoal = async () => {
+  const openEditModal = (goal: Goal) => {
+    setEditGoalId(goal.id);
+    setTitle(goal.title);
+    setDescription(goal.description || '');
+    setCategory(goal.category);
+    setModalVisible(true);
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    setEditGoalId(null);
+    setTitle('');
+    setDescription('');
+    setCategory('Personal');
+  };
+
+  const saveGoal = async () => {
     if (!title.trim() || !user) {
       showError('Error', 'Please enter a goal title');
       return;
     }
 
     setLoading(true);
-    await SyncService.insertWithFallback('goals', user.id, {
+    const goalData = {
       title: title.trim(),
       description: description.trim() || null,
       category,
-      progress: 0,
-      is_completed: false,
-    });
+    };
+
+    if (editGoalId) {
+      // Update existing goal (don't reset progress)
+      await SyncService.updateWithFallback('goals', user.id, editGoalId, goalData);
+    } else {
+      // Create new goal
+      await SyncService.insertWithFallback('goals', user.id, {
+        ...goalData,
+        progress: 0,
+        is_completed: false,
+      });
+    }
+
     setLoading(false);
-    setTitle('');
-    setDescription('');
-    setCategory('Personal');
-    setModalVisible(false);
+    closeModal();
     loadGoals();
   };
 
@@ -104,7 +129,13 @@ export default function GoalsScreen() {
       <ScreenHeader
         title="Goals"
         subtitle={`${goals.filter((g) => !g.is_completed).length} active goals`}
-        onAddPress={() => setModalVisible(true)}
+        onAddPress={() => {
+          setEditGoalId(null);
+          setTitle('');
+          setDescription('');
+          setCategory('Personal');
+          setModalVisible(true);
+        }}
       />
 
       <ScrollView style={styles.content}>
@@ -169,6 +200,12 @@ export default function GoalsScreen() {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
+                  onPress={() => openEditModal(goal)}
+                >
+                  <Edit2 size={16} color={colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity
                   style={[styles.deleteButton, { backgroundColor: `${colors.error}15` }]}
                   onPress={() => deleteGoal(goal.id)}
                 >
@@ -185,8 +222,10 @@ export default function GoalsScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>New Goal</Text>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>
+                {editGoalId ? 'Edit Goal' : 'New Goal'}
+              </Text>
+              <TouchableOpacity onPress={closeModal}>
                 <X size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -242,7 +281,7 @@ export default function GoalsScreen() {
               ))}
             </View>
 
-            <Button title="Create Goal" onPress={addGoal} loading={loading} />
+            <Button title={editGoalId ? 'Update Goal' : 'Create Goal'} onPress={saveGoal} loading={loading} />
           </View>
         </View>
       </Modal>
@@ -341,6 +380,13 @@ const createStyles = (colors: any) =>
     progressButtonText: {
       fontSize: 14,
       fontWeight: '600',
+    },
+    actionButton: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 8,
     },
     deleteButton: {
       width: 44,

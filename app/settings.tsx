@@ -5,21 +5,69 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
-import { ArrowLeft, Moon, Sun, User, Bell, Database, LogOut } from 'lucide-react-native';
+import { ArrowLeft, Moon, Sun, User, Bell, Database, LogOut, Fingerprint } from 'lucide-react-native';
 import { SyncService } from '@/lib/sync';
 import { NotificationService } from '@/lib/notifications';
 import * as Notifications from 'expo-notifications';
 import { showSuccess, showError, showWarning, showConfirm, showInfo } from '@/lib/alert';
+import { BiometricService } from '@/lib/biometric';
 
 export default function SettingsScreen() {
   const { colors, theme, toggleTheme, isDark } = useTheme();
   const { user, profile, signOut } = useAuth();
   const router = useRouter();
   const [notificationPermission, setNotificationPermission] = useState<boolean>(false);
+  const [biometricAvailable, setBiometricAvailable] = useState<boolean>(false);
+  const [biometricEnabled, setBiometricEnabled] = useState<boolean>(false);
+  const [biometricType, setBiometricType] = useState<string>('Biometric');
 
   useEffect(() => {
     checkNotificationPermission();
+    checkBiometricAvailability();
   }, []);
+
+  const checkBiometricAvailability = async () => {
+    const available = await BiometricService.isAvailable();
+    const enabled = await BiometricService.isEnabled();
+    const type = await BiometricService.getBiometricType();
+    setBiometricAvailable(available);
+    setBiometricEnabled(enabled);
+    setBiometricType(type);
+  };
+
+  const handleBiometricToggle = async (value: boolean) => {
+    try {
+      if (value) {
+        // First authenticate to enable biometric
+        const authenticated = await BiometricService.authenticate();
+        if (!authenticated) {
+          showError('Authentication Failed', 'Biometric authentication failed. Please try again.');
+          return;
+        }
+
+        // Check if user has credentials saved (from previous login)
+        const credentials = await BiometricService.getCredentials();
+        if (!credentials) {
+          showError(
+            'No Credentials',
+            'Please login with email and password first to enable biometric login.',
+          );
+          return;
+        }
+
+        await BiometricService.enable();
+        setBiometricEnabled(true);
+        showSuccess('Success', `${biometricType} login enabled!`);
+      } else {
+        await BiometricService.disable();
+        setBiometricEnabled(false);
+        showSuccess('Success', `${biometricType} login disabled.`);
+      }
+    } catch (error) {
+      console.error('Error toggling biometric:', error);
+      showError('Error', 'Failed to update biometric settings');
+    }
+  };
 
   const checkNotificationPermission = async () => {
     const { status } = await Notifications.getPermissionsAsync();
@@ -125,6 +173,30 @@ export default function SettingsScreen() {
           </Card>
         </TouchableOpacity>
 
+        {biometricAvailable && (
+          <>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Security</Text>
+            <Card style={styles.settingCard}>
+              <View style={styles.settingRow}>
+                <View style={styles.settingLeft}>
+                  <Fingerprint size={20} color={colors.primary} />
+                  <View>
+                    <Text style={[styles.settingLabel, { color: colors.text }]}>{biometricType} Login</Text>
+                    <Text style={[styles.settingDescription, { color: colors.textSecondary }]}>
+                      Use {biometricType.toLowerCase()} to login quickly
+                    </Text>
+                  </View>
+                </View>
+                <Switch
+                  value={biometricEnabled}
+                  onValueChange={handleBiometricToggle}
+                  trackColor={{ false: colors.border, true: colors.primary }}
+                />
+              </View>
+            </Card>
+          </>
+        )}
+
         <View style={styles.buttonContainer}>
           <Button
             title="Sign Out"
@@ -217,6 +289,10 @@ const createStyles = (colors: any) =>
     settingLabel: {
       fontSize: 16,
       fontWeight: '500',
+    },
+    settingDescription: {
+      fontSize: 12,
+      marginTop: 2,
     },
     settingValue: {
       fontSize: 14,

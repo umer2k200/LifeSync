@@ -1,7 +1,8 @@
 import React, { ReactNode } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Plus } from 'lucide-react-native';
+import { Plus, Menu } from 'lucide-react-native';
+import { useNavigation, DrawerActions } from '@react-navigation/native';
 
 interface ScreenHeaderProps {
   title: string;
@@ -12,9 +13,16 @@ interface ScreenHeaderProps {
 
 export const ScreenHeader = ({ title, subtitle, onAddPress, rightElement }: ScreenHeaderProps) => {
   const { colors } = useTheme();
+  const navigation = useNavigation();
 
   return (
     <View style={[styles.header, { backgroundColor: colors.background }]}>
+      <TouchableOpacity
+        onPress={() => navigation.dispatch(DrawerActions.openDrawer())}
+        style={styles.menuButton}
+      >
+        <Menu size={24} color={colors.text} />
+      </TouchableOpacity>
       <View style={styles.textContainer}>
         <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
         {subtitle && <Text style={[styles.subtitle, { color: colors.textSecondary }]}>{subtitle}</Text>}
@@ -40,6 +48,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 60,
     paddingBottom: 20,
+  },
+  menuButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
   },
   textContainer: {
     flex: 1,
