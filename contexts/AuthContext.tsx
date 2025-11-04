@@ -214,6 +214,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
+    // Unregister all push notification tokens before signing out
+    if (user?.id) {
+      try {
+        const { NotificationService } = await import('@/lib/notifications');
+        await NotificationService.unregisterAllPushNotifications(user.id);
+      } catch (error) {
+        console.error('Error unregistering push notifications on sign out:', error);
+        // Continue with sign out even if unregistering fails
+      }
+    }
+    
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);

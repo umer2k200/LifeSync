@@ -327,7 +327,7 @@ export default function IslamicScreen() {
         if (result) {
           showSuccess('Success', 'Quran progress saved successfully!');
         } else {
-          showError('Error', 'Failed to save progress. Please check the terminal for details.');
+          showError('Error', 'Failed to save progress. Please try again.');
           return;
         }
       }
@@ -336,7 +336,7 @@ export default function IslamicScreen() {
       await loadQuranProgress();
     } catch (error: any) {
       console.error('Error saving Quran progress:', error);
-      showError('Error', error?.message || 'Failed to save progress. Please check the terminal for details.');
+      showError('Error', error?.message || 'Failed to save progress. Please try again.');
     }
   };
 

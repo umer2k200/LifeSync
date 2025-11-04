@@ -14,9 +14,9 @@
     },
     "android": {
       "package": "com.lifesync.app",
-      "versionCode": 2,
+      "versionCode": 2.0,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/icon.png",
+        "foregroundImage": "./assets/images/icon-foreground.png",
         "backgroundColor": "#6A5ACD"
       },
       "icon": "./assets/images/icon.png",
@@ -44,8 +44,8 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/icon.png",
-          "imageWidth": 512,
-          "resizeMode": "cover",
+          "imageWidth": 200,
+          "resizeMode": "contain",
           "backgroundColor": "#6A5ACD"
         }
       ],

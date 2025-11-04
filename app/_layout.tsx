@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import * as Notifications from 'expo-notifications';
 import type { User } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
+import { CurrencyProvider } from '@/contexts/CurrencyContext';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SyncService } from '@/lib/sync';
 import { NotificationService } from '@/lib/notifications';
@@ -31,9 +31,8 @@ function RootLayoutNav() {
   useEffect(() => {
     const checkOnboarding = async () => {
       try {
-        const value = await AsyncStorage.getItem(ONBOARDING_KEY);
-        const completed = value === 'true';
-        setHasOnboardingBeenShown(completed);
+        const onboardingValue = await AsyncStorage.getItem(ONBOARDING_KEY);
+        setHasOnboardingBeenShown(onboardingValue === 'true');
       } catch (error) {
         console.error('Error checking onboarding:', error);
         setHasOnboardingBeenShown(false);
@@ -41,11 +40,11 @@ function RootLayoutNav() {
     };
     checkOnboarding();
     
-    // Periodically check for onboarding completion (catches async saves from onboarding screen)
+    // Periodically check for completion (catches async saves)
     const interval = setInterval(async () => {
       try {
-        const value = await AsyncStorage.getItem(ONBOARDING_KEY);
-        if (value === 'true' && hasOnboardingBeenShown === false) {
+        const onboardingValue = await AsyncStorage.getItem(ONBOARDING_KEY);
+        if (onboardingValue === 'true' && hasOnboardingBeenShown === false) {
           setHasOnboardingBeenShown(true);
         }
       } catch {
@@ -96,14 +95,14 @@ function RootLayoutNav() {
         const timer = setTimeout(() => {
           // Double-check user still exists before navigating (prevent race condition)
           if (user) {
-          router.replace('/(tabs)');
+            router.replace('/(tabs)');
           }
         }, 100);
         return () => clearTimeout(timer);
       } else if (!isLoginOrSignup) {
         // Not on login/signup but in auth group - redirect immediately
         if (user) {
-        router.replace('/(tabs)');
+          router.replace('/(tabs)');
         }
       }
     }
@@ -114,42 +113,65 @@ function RootLayoutNav() {
   }, []);
 
   // Initialize push notifications when user is logged in
+  const notificationsInitializedRef = useRef<string | null>(null);
+  
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      // Reset when user logs out
+      notificationsInitializedRef.current = null;
+      return;
+    }
+
+    // Prevent duplicate initialization for the same user
+    if (notificationsInitializedRef.current === user.id) {
+      return;
+    }
 
     let cleanup: (() => void) | undefined;
+    let isCancelled = false;
 
     const initializeNotifications = async () => {
       try {
         // Check if notifications are enabled first
         const hasPermission = await NotificationService.areNotificationsEnabled();
         
+        // Check if cancelled before proceeding
+        if (isCancelled) return;
+        
         if (hasPermission) {
           // Register for push notifications
           await NotificationService.registerForPushNotifications(user.id);
           
-          // Schedule all app notifications
+          // Check again if cancelled
+          if (isCancelled) return;
+          
+          // Schedule all app notifications (only once per user)
           await NotificationScheduler.scheduleAllNotifications(user.id);
+          
+          // Mark as initialized for this user
+          notificationsInitializedRef.current = user.id;
         }
 
         // Set up notification listeners (always set up, even if permissions not granted yet)
-        cleanup = NotificationService.initializeNotificationListeners(
-          // Notification received (foreground)
-          (notification) => {
-            console.log('Notification received:', notification);
-            // You can show a custom in-app notification here
-          },
-          // Notification tapped (opened from notification)
-          (response) => {
-            console.log('Notification tapped:', response);
-            const data = response.notification.request.content.data;
-            
-            // Navigate based on notification data
-            if (data?.screen) {
-              router.push(data.screen as any);
+        if (!isCancelled) {
+          cleanup = NotificationService.initializeNotificationListeners(
+            // Notification received (foreground)
+            (notification) => {
+              console.log('Notification received:', notification);
+              // You can show a custom in-app notification here
+            },
+            // Notification tapped (opened from notification)
+            (response) => {
+              console.log('Notification tapped:', response);
+              const data = response.notification.request.content.data;
+              
+              // Navigate based on notification data
+              if (data?.screen) {
+                router.push(data.screen as any);
+              }
             }
-          }
-        );
+          );
+        }
       } catch (error) {
         console.error('Error initializing notifications:', error);
       }
@@ -159,6 +181,7 @@ function RootLayoutNav() {
 
     // Cleanup on unmount or user change
     return () => {
+      isCancelled = true;
       if (cleanup) {
         cleanup();
       }
@@ -172,7 +195,6 @@ function RootLayoutNav() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="+not-found" />
-        <Stack.Screen name="settings" />
       </Stack>
       <GlobalAlert />
       <StatusBar style="auto" />
@@ -186,9 +208,11 @@ export default function RootLayout() {
   return (
     <ErrorBoundary>
       <ThemeProvider>
-        <AuthProvider>
-          <RootLayoutNav />
-        </AuthProvider>
+        <CurrencyProvider>
+          <AuthProvider>
+            <RootLayoutNav />
+          </AuthProvider>
+        </CurrencyProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

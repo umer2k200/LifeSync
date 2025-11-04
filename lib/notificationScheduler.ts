@@ -24,11 +24,22 @@ interface Task {
 }
 
 export class NotificationScheduler {
+  // Track ongoing scheduling operations to prevent duplicates
+  private static schedulingInProgress = new Set<string>();
+
   /**
    * Schedule all notifications for a user
    * This should be called when the app starts or user logs in
    */
   static async scheduleAllNotifications(userId: string): Promise<void> {
+    // Prevent duplicate scheduling for the same user
+    if (this.schedulingInProgress.has(userId)) {
+      console.log('Notification scheduling already in progress for user, skipping...');
+      return;
+    }
+
+    this.schedulingInProgress.add(userId);
+
     try {
       // First, cancel all existing notifications to avoid duplicates
       await NotificationService.cancelAllNotifications();
@@ -51,6 +62,11 @@ export class NotificationScheduler {
       console.log('All notifications scheduled successfully');
     } catch (error) {
       console.error('Error scheduling notifications:', error);
+    } finally {
+      // Remove from in-progress set after a short delay to allow async operations to complete
+      setTimeout(() => {
+        this.schedulingInProgress.delete(userId);
+      }, 1000);
     }
   }
 
@@ -156,20 +172,50 @@ export class NotificationScheduler {
   }
 
   /**
-   * Schedule water intake reminders (every 2 hours from 8 AM to 10 PM)
+   * Schedule water intake reminders based on user settings
    */
   static async scheduleWaterReminders(userId: string): Promise<void> {
     try {
-      const hours = [8, 10, 12, 14, 16, 18, 20, 22]; // Every 2 hours
+      // Fetch water reminder settings from database
+      const settings = await SyncService.fetchWithFallback<{
+        enabled: boolean;
+        interval_hours: number;
+        start_hour: number;
+        start_minute: number;
+        end_hour: number;
+        end_minute: number;
+      }>('water_reminder_settings', userId);
 
-      for (const hour of hours) {
+      // If no settings found or reminders disabled, skip scheduling
+      if (!settings || settings.length === 0 || !settings[0].enabled) {
+        console.log('Water reminders disabled or no settings found');
+        return;
+      }
+
+      const { interval_hours, start_hour, start_minute, end_hour, end_minute } = settings[0];
+
+      // Calculate reminder times based on interval
+      const reminderTimes: { hour: number; minute: number }[] = [];
+      const startTimeMinutes = start_hour * 60 + start_minute;
+      const endTimeMinutes = end_hour * 60 + end_minute;
+
+      let currentTimeMinutes = startTimeMinutes;
+      while (currentTimeMinutes <= endTimeMinutes) {
+        const hour = Math.floor(currentTimeMinutes / 60);
+        const minute = currentTimeMinutes % 60;
+        reminderTimes.push({ hour, minute });
+        currentTimeMinutes += interval_hours * 60;
+      }
+
+      // Schedule notifications for each time
+      for (const { hour, minute } of reminderTimes) {
         await NotificationService.scheduleNotificationWithData(
           'Stay Hydrated! 💧',
           'Don\'t forget to drink water. Your body needs it!',
           {
             type: Notifications.SchedulableTriggerInputTypes.DAILY,
             hour,
-            minute: 0,
+            minute,
           },
           {
             type: 'water_reminder',
@@ -178,7 +224,7 @@ export class NotificationScheduler {
         );
       }
 
-      console.log('Scheduled water intake reminders');
+      console.log(`Scheduled ${reminderTimes.length} water intake reminders`);
     } catch (error) {
       console.error('Error scheduling water reminders:', error);
     }

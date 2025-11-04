@@ -3,6 +3,7 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Modal, TextInput 
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useCurrency } from '@/contexts/CurrencyContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/Card';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
@@ -29,6 +30,7 @@ interface ExpenseCategory {
 
 export default function ExpenseHistoryScreen() {
   const { colors } = useTheme();
+  const { currency } = useCurrency();
   const { user } = useAuth();
   const router = useRouter();
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -249,7 +251,7 @@ export default function ExpenseHistoryScreen() {
             </TouchableOpacity>
           </View>
           <Text style={[styles.monthTotal, { color: colors.text }]}>
-            Total: Rs. {Math.round(monthlyTotal).toLocaleString()}
+            Total: {currency.symbol} {Math.round(monthlyTotal).toLocaleString()}
             {selectedCategory && (
               <Text style={[styles.categoryTotal, { color: colors.textSecondary }]}>
                 {' '}({selectedCategory === 'no-category' ? 'No Category' : getCategoryName(selectedCategory)})
@@ -364,7 +366,7 @@ export default function ExpenseHistoryScreen() {
                   <View key={index} style={styles.pieLegendItem}>
                     <View style={[styles.pieLegendColor, { backgroundColor: item.color }]} />
                     <Text style={[styles.pieLegendText, { color: colors.text }]} numberOfLines={1}>
-                      {item.label}: Rs. {item.value.toLocaleString()}
+                      {item.label}: {currency.symbol} {item.value.toLocaleString()}
                     </Text>
                   </View>
                 ))}
@@ -390,7 +392,7 @@ export default function ExpenseHistoryScreen() {
                   <View style={{ flex: 1 }}>
                     <View style={styles.expenseHeader}>
                       <Text style={[styles.expenseAmount, { color: colors.text }]}>
-                        Rs. {Math.round(Number(expense.amount)).toLocaleString()}
+                        {currency.symbol} {Math.round(Number(expense.amount)).toLocaleString()}
                       </Text>
                     </View>
                     {expense.description && (

@@ -49,7 +49,7 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
-  const [theme, setTheme] = useState<Theme>('light');
+  const [theme, setTheme] = useState<Theme>('dark'); // Default to dark mode
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -61,8 +61,9 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         // Load theme from database when user logs in
         await loadThemeFromDatabase(session.user.id);
       } else if (event === 'SIGNED_OUT') {
-        // Reset to light theme when logged out
-        setTheme('light');
+        // Reset to dark theme when logged out (default)
+        setTheme('dark');
+        await AsyncStorage.setItem('@lifesync_theme', 'dark');
       }
     });
 
@@ -77,10 +78,14 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       if (session?.user) {
         await loadThemeFromDatabase(session.user.id);
       } else {
-        // Fallback to AsyncStorage if not logged in
+        // Fallback to AsyncStorage if not logged in, default to dark if not set
         const savedTheme = await AsyncStorage.getItem('@lifesync_theme');
         if (savedTheme === 'dark' || savedTheme === 'light') {
           setTheme(savedTheme);
+        } else {
+          // First time app load - default to dark mode
+          setTheme('dark');
+          await AsyncStorage.setItem('@lifesync_theme', 'dark');
         }
       }
     } catch (error) {
@@ -125,11 +130,15 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         // Also save to AsyncStorage for offline access
         await AsyncStorage.setItem('@lifesync_theme', themeData.theme);
       } else {
-        // No theme in database, use AsyncStorage
-        const savedTheme = await AsyncStorage.getItem('@lifesync_theme');
-        if (savedTheme === 'dark' || savedTheme === 'light') {
-          setTheme(savedTheme);
-        }
+        // No theme in database - default to dark for new users
+        setTheme('dark');
+        await AsyncStorage.setItem('@lifesync_theme', 'dark');
+        // Save to database
+        await supabase
+          .from('profiles')
+          // @ts-ignore - Supabase type inference issue
+          .update({ theme: 'dark' })
+          .eq('id', userId);
       }
     } catch (error) {
       console.error('Error loading theme from database:', error);

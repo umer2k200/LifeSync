@@ -222,7 +222,7 @@ export default function WorkoutScreen() {
   };
 
   const deleteWorkout = async (workoutId: string) => {
-    showConfirmDestructive('Delete Workout', 'Are you sure? This will also delete all exercises.', async () => {
+    showConfirmDestructive('Delete Workout', 'Are you sure you want to delete this workout? This will also delete all associated exercises. This action cannot be undone.', async () => {
       if (!user) return;
       await SyncService.deleteWithFallback('workouts', user.id, workoutId);
       loadData();
@@ -343,7 +343,7 @@ export default function WorkoutScreen() {
   };
 
   const deleteExercise = async (exerciseId: string) => {
-    showConfirmDestructive('Delete Exercise', 'Are you sure?', async () => {
+    showConfirmDestructive('Delete Exercise', 'Are you sure you want to delete this exercise? This action cannot be undone.', async () => {
       if (!user) return;
       await SyncService.deleteWithFallback('exercises', user.id, exerciseId);
       loadData();
@@ -590,7 +590,7 @@ export default function WorkoutScreen() {
   };
 
   const deleteMeal = async (mealId: string) => {
-    showConfirmDestructive('Delete Meal', 'Are you sure?', async () => {
+    showConfirmDestructive('Delete Meal', 'Are you sure you want to delete this meal? This action cannot be undone.', async () => {
       if (!user) return;
       await SyncService.deleteWithFallback('meals', user.id, mealId);
       loadData();
@@ -795,7 +795,7 @@ export default function WorkoutScreen() {
                     <TouchableOpacity
                       style={[styles.exitButton, { backgroundColor: colors.error + '20' }]}
                       onPress={() => {
-                        showConfirm('Exit Workout', 'Are you sure? All progress will be saved.', () => {
+                        showConfirm('Exit Workout', 'Are you sure you want to exit? All progress will be saved.', () => {
                           completeWorkout();
                         });
                       }}

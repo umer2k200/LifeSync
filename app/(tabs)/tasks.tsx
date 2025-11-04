@@ -9,7 +9,7 @@ import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
 import { NotificationScheduler } from '@/lib/notificationScheduler';
-import { CheckCircle2, Circle, X, Search, Filter, Calendar, ListTodo, Edit2 } from 'lucide-react-native';
+import { CheckCircle2, Circle, X, Search, Filter, Calendar, ListTodo, Edit2, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { format, isPast, isToday, parseISO } from 'date-fns';
 import { showError, showConfirmDestructive, showSuccess } from '@/lib/alert';
 
@@ -79,6 +79,8 @@ export default function TasksScreen() {
   const [filterOption, setFilterOption] = useState<FilterOption>('all');
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [showActive, setShowActive] = useState(true);
+  const [showCompleted, setShowCompleted] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -593,17 +595,37 @@ export default function TasksScreen() {
           <>
             {activeTasks.length > 0 && (
               <>
-                <Text style={[styles.sectionTitle, { color: colors.text }]}>Active</Text>
-                {activeTasks.map(renderTaskCard)}
+                <TouchableOpacity
+                  style={styles.sectionHeader}
+                  onPress={() => setShowActive(!showActive)}
+                >
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Active ({activeTasks.length})</Text>
+                  {showActive ? (
+                    <ChevronUp size={20} color={colors.textSecondary} />
+                  ) : (
+                    <ChevronDown size={20} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+                {showActive && activeTasks.map(renderTaskCard)}
               </>
             )}
 
             {completedTasks.length > 0 && (
               <>
-                <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 16 }]}>
-                  Completed
-                </Text>
-                {completedTasks.map(renderTaskCard)}
+                <TouchableOpacity
+                  style={styles.sectionHeader}
+                  onPress={() => setShowCompleted(!showCompleted)}
+                >
+                  <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 16 }]}>
+                    Completed ({completedTasks.length})
+                  </Text>
+                  {showCompleted ? (
+                    <ChevronUp size={20} color={colors.textSecondary} />
+                  ) : (
+                    <ChevronDown size={20} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+                {showCompleted && completedTasks.map(renderTaskCard)}
               </>
             )}
           </>
@@ -618,7 +640,7 @@ export default function TasksScreen() {
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>
-                {editTaskId ? 'Edit Task' : 'New Task'}
+                {editTaskId ? 'Edit Task' : 'Add Task'}
               </Text>
               <TouchableOpacity onPress={closeModal}>
                 <X size={24} color={colors.text} />
@@ -899,6 +921,13 @@ const createStyles = (colors: any) =>
     sectionTitle: {
       fontSize: 18,
       fontWeight: 'bold',
+      marginBottom: 12,
+      marginTop: 8,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
       marginBottom: 12,
       marginTop: 8,
     },

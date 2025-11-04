@@ -25,6 +25,7 @@ import {
   Menu,
 } from 'lucide-react-native';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useCurrency } from '@/contexts/CurrencyContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card } from '@/components/Card';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
@@ -55,6 +56,7 @@ interface Habit {
 
 export default function HomeScreen() {
   const { colors, isDark } = useTheme();
+  const { currency } = useCurrency();
   const { user, profile, loading: authLoading } = useAuth();
   const router = useRouter();
   const navigation = useNavigation();
@@ -88,9 +90,10 @@ export default function HomeScreen() {
 
   const getTimeBasedGreeting = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
-    return 'Good evening';
+    if (hour >= 5 && hour < 12) return 'Good morning';
+    if (hour >= 12 && hour < 17) return 'Good afternoon';
+    if (hour >= 17 && hour < 22) return 'Good evening';
+    return 'Hello';
   };
 
   const calculateHabitStreak = (habitLogs: any[]) => {
@@ -245,7 +248,7 @@ export default function HomeScreen() {
         {
           icon: DollarSign,
           label: 'This Month',
-          value: `Rs. ${monthlyExpenses.toFixed(0)}`,
+          value: `${currency.symbol} ${monthlyExpenses.toFixed(0)}`,
           color: colors.error,
           route: '/(tabs)/expenses',
         },
@@ -297,7 +300,7 @@ export default function HomeScreen() {
             )}
             <TouchableOpacity
               style={[styles.settingsButton, { backgroundColor: 'rgba(255,255,255,0.2)' }]}
-              onPress={() => router.push('/settings' as any)}
+              onPress={() => router.push('/(tabs)/settings' as any)}
             >
               <Settings size={24} color="#FFFFFF" />
             </TouchableOpacity>

@@ -1,7 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import * as Device from 'expo-device';
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { supabase } from './supabase';
 import { SyncService } from './sync';
 
@@ -222,6 +222,14 @@ export class NotificationService {
         return null;
       }
 
+      // Skip registration if running in Expo Go (development mode)
+      // Expo Go tokens persist even after app removal and can receive notifications
+      const executionEnvironment = Constants.executionEnvironment;
+      if (executionEnvironment === ExecutionEnvironment.StoreClient) {
+        console.warn('Push notifications are disabled in Expo Go to prevent receiving notifications after app removal. Use a production build for push notifications.');
+        return null;
+      }
+
       const hasPermission = await this.requestPermissions();
       if (!hasPermission) {
         console.warn('Notification permissions not granted');
@@ -236,6 +244,10 @@ export class NotificationService {
       const token = tokenData.data;
       const platform = Platform.OS;
       const deviceId = Device.modelName || Device.modelId || 'unknown';
+      
+      // Mark execution environment to distinguish production builds from Expo Go
+      const isProduction = executionEnvironment === ExecutionEnvironment.Standalone || 
+                          executionEnvironment === ExecutionEnvironment.Bare;
 
       // Save token to database - try direct sync first if online
       if (SyncService.getConnectionStatus()) {
@@ -247,6 +259,7 @@ export class NotificationService {
               token,
               platform,
               device_id: deviceId,
+              is_production: isProduction, // Mark as production build
               updated_at: new Date().toISOString(),
             }, {
               onConflict: 'user_id,token',
@@ -259,6 +272,7 @@ export class NotificationService {
               token,
               platform,
               device_id: deviceId,
+              is_production: isProduction,
             });
           }
         } catch (error) {
@@ -268,6 +282,7 @@ export class NotificationService {
             token,
             platform,
             device_id: deviceId,
+            is_production: isProduction,
           });
         }
       } else {
@@ -276,6 +291,7 @@ export class NotificationService {
           token,
           platform,
           device_id: deviceId,
+          is_production: isProduction,
         });
       }
 
@@ -307,6 +323,47 @@ export class NotificationService {
       }
     } catch (error) {
       console.error('Error unregistering push notifications:', error);
+    }
+  }
+
+  /**
+   * Unregister all push notification tokens for a user
+   * Useful when signing out or uninstalling the app
+   */
+  static async unregisterAllPushNotifications(userId: string): Promise<void> {
+    try {
+      // Cancel all scheduled notifications
+      await this.cancelAllNotifications();
+
+      if (SyncService.getConnectionStatus()) {
+        try {
+          // Delete all tokens from database
+          const { error } = await supabase
+            .from('push_tokens')
+            .delete()
+            .eq('user_id', userId);
+
+          if (error) {
+            console.error('Error deleting all push tokens from Supabase:', error);
+          } else {
+            console.log('All push notification tokens unregistered for user');
+          }
+        } catch (error) {
+          console.error('Error deleting all push tokens from Supabase:', error);
+        }
+      }
+
+      // Also try to delete from local storage if available
+      try {
+        const tokens = await this.getUserPushTokens(userId);
+        for (const token of tokens) {
+          await SyncService.deleteWithFallback('push_tokens', userId, token);
+        }
+      } catch (error) {
+        console.error('Error deleting tokens from local storage:', error);
+      }
+    } catch (error) {
+      console.error('Error unregistering all push notifications:', error);
     }
   }
 

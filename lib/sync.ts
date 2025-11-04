@@ -87,6 +87,7 @@ export class SyncService {
         'exercise_logs',
         'meals',
         'water_logs',
+        'water_reminder_settings',
         'tasks',
         'task_categories',
         'expenses',
@@ -97,6 +98,13 @@ export class SyncService {
         'tasbeeh_logs',
         'charity_reminders',
         'push_tokens',
+        'notes',
+        'shopping_list_items',
+        'bike_items',
+        'bike_tasks',
+        'travel_places',
+        'travel_items',
+        'travel_expenses',
       ];
 
       for (const table of tables) {

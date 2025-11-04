@@ -16,27 +16,17 @@ import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
-import { Target, TrendingUp, CheckCircle2, X, Edit2 } from 'lucide-react-native';
-import { showError, showConfirmDestructive } from '@/lib/alert';
+import { Target, TrendingUp, CheckCircle2, X, Edit2, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { showError, showConfirmDestructive, showSuccess } from '@/lib/alert';
 
 interface Goal {
   id: string;
   title: string;
   description: string | null;
-  category: string;
   deadline: string | null;
   progress: number;
   is_completed: boolean;
 }
-
-const CATEGORIES = ['Personal', 'Fitness', 'Career', 'Spiritual', 'Financial'];
-const CATEGORY_COLORS: Record<string, string> = {
-  Personal: '#6A5ACD',
-  Fitness: '#10B981',
-  Career: '#8B5CF6',
-  Spiritual: '#14B8A6',
-  Financial: '#F59E0B',
-};
 
 export default function GoalsScreen() {
   const { colors } = useTheme();
@@ -46,9 +36,10 @@ export default function GoalsScreen() {
   const [editGoalId, setEditGoalId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('Personal');
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [showActive, setShowActive] = useState(true);
+  const [showCompleted, setShowCompleted] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -81,7 +72,6 @@ export default function GoalsScreen() {
     setEditGoalId(goal.id);
     setTitle(goal.title);
     setDescription(goal.description || '');
-    setCategory(goal.category);
     setModalVisible(true);
   };
 
@@ -90,7 +80,6 @@ export default function GoalsScreen() {
     setEditGoalId(null);
     setTitle('');
     setDescription('');
-    setCategory('Personal');
   };
 
   const saveGoal = async () => {
@@ -100,27 +89,38 @@ export default function GoalsScreen() {
     }
 
     setLoading(true);
-    const goalData = {
-      title: title.trim(),
-      description: description.trim() || null,
-      category,
-    };
+    try {
+      const goalData = {
+        title: title.trim(),
+        description: description.trim() || null,
+        category: 'Personal', // Default category since category feature was removed from UI
+      };
 
-    if (editGoalId) {
-      // Update existing goal (don't reset progress)
-      await SyncService.updateWithFallback('goals', user.id, editGoalId, goalData);
-    } else {
-      // Create new goal
-      await SyncService.insertWithFallback('goals', user.id, {
-        ...goalData,
-        progress: 0,
-        is_completed: false,
-      });
+      if (editGoalId) {
+        // Update existing goal (don't reset progress)
+        await SyncService.updateWithFallback('goals', user.id, editGoalId, goalData);
+        showSuccess('Success', 'Goal updated!');
+      } else {
+        // Create new goal
+        const result = await SyncService.insertWithFallback('goals', user.id, {
+          ...goalData,
+          progress: 0,
+          is_completed: false,
+        });
+        if (!result) {
+          throw new Error('Failed to create goal');
+        }
+        showSuccess('Success', 'Goal created!');
+      }
+
+      closeModal();
+      loadGoals();
+    } catch (error) {
+      console.error('Error saving goal:', error);
+      showError('Error', 'Failed to save goal. Please try again.');
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
-    closeModal();
-    loadGoals();
   };
 
   const updateProgress = async (goalId: string, newProgress: number) => {
@@ -134,7 +134,7 @@ export default function GoalsScreen() {
 
   const deleteGoal = async (goalId: string) => {
     if (!user) return;
-    showConfirmDestructive('Delete Goal', 'Are you sure?', async () => {
+    showConfirmDestructive('Delete Goal', 'Are you sure you want to delete this goal? This action cannot be undone.', async () => {
       await SyncService.deleteWithFallback('goals', user.id, goalId);
       loadGoals();
     });
@@ -151,7 +151,6 @@ export default function GoalsScreen() {
           setEditGoalId(null);
           setTitle('');
           setDescription('');
-          setCategory('Personal');
           setModalVisible(true);
         }}
       />
@@ -167,21 +166,26 @@ export default function GoalsScreen() {
             </Text>
           </Card>
         ) : (
-          goals.map((goal) => (
+          <>
+            {goals.filter((g) => !g.is_completed).length > 0 && (
+              <>
+                <TouchableOpacity
+                  style={styles.sectionHeader}
+                  onPress={() => setShowActive(!showActive)}
+                >
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                    Active ({goals.filter((g) => !g.is_completed).length})
+                  </Text>
+                  {showActive ? (
+                    <ChevronUp size={20} color={colors.textSecondary} />
+                  ) : (
+                    <ChevronDown size={20} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+                {showActive && goals.filter((g) => !g.is_completed).map((goal) => (
             <Card key={goal.id} style={styles.goalCard}>
               <View style={styles.goalHeader}>
                 <View style={{ flex: 1 }}>
-                  <View style={styles.categoryBadge}>
-                    <View
-                      style={[
-                        styles.categoryDot,
-                        { backgroundColor: CATEGORY_COLORS[goal.category] || colors.primary },
-                      ]}
-                    />
-                    <Text style={[styles.categoryText, { color: colors.textSecondary }]}>
-                      {goal.category}
-                    </Text>
-                  </View>
                   <Text style={[styles.goalTitle, { color: colors.text }]}>{goal.title}</Text>
                   {goal.description && (
                     <Text style={[styles.goalDescription, { color: colors.textSecondary }]}>
@@ -233,7 +237,83 @@ export default function GoalsScreen() {
                 </TouchableOpacity>
               </View>
             </Card>
-          ))
+          ))}
+              </>
+            )}
+            {goals.filter((g) => g.is_completed).length > 0 && (
+              <>
+                <TouchableOpacity
+                  style={styles.sectionHeader}
+                  onPress={() => setShowCompleted(!showCompleted)}
+                >
+                  <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                    Completed ({goals.filter((g) => g.is_completed).length})
+                  </Text>
+                  {showCompleted ? (
+                    <ChevronUp size={20} color={colors.textSecondary} />
+                  ) : (
+                    <ChevronDown size={20} color={colors.textSecondary} />
+                  )}
+                </TouchableOpacity>
+                {showCompleted && goals.filter((g) => g.is_completed).map((goal) => (
+                  <Card key={goal.id} style={styles.goalCard}>
+                    <View style={styles.goalHeader}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.goalTitle, { color: colors.text }]}>{goal.title}</Text>
+                        {goal.description && (
+                          <Text style={[styles.goalDescription, { color: colors.textSecondary }]}>
+                            {goal.description}
+                          </Text>
+                        )}
+                      </View>
+                      {goal.is_completed && <CheckCircle2 size={24} color={colors.success} />}
+                    </View>
+
+                    <View style={styles.progressContainer}>
+                      <View style={styles.progressBar}>
+                        <View
+                          style={[
+                            styles.progressFill,
+                            {
+                              width: `${goal.progress}%`,
+                              backgroundColor: goal.is_completed ? colors.success : colors.primary,
+                            },
+                          ]}
+                        />
+                      </View>
+                      <Text style={[styles.progressText, { color: colors.textSecondary }]}>
+                        {goal.progress}%
+                      </Text>
+                    </View>
+
+                    <View style={styles.goalActions}>
+                      <TouchableOpacity
+                        style={[styles.progressButton, { backgroundColor: colors.surface }]}
+                        onPress={() => updateProgress(goal.id, Math.min(goal.progress + 10, 100))}
+                      >
+                        <TrendingUp size={16} color={colors.primary} />
+                        <Text style={[styles.progressButtonText, { color: colors.primary }]}>
+                          +10%
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
+                        onPress={() => openEditModal(goal)}
+                      >
+                        <Edit2 size={16} color={colors.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.deleteButton, { backgroundColor: `${colors.error}15` }]}
+                        onPress={() => deleteGoal(goal.id)}
+                      >
+                        <X size={16} color={colors.error} />
+                      </TouchableOpacity>
+                    </View>
+                  </Card>
+                ))}
+              </>
+            )}
+          </>
         )}
         <View style={{ height: 80 }} />
       </ScrollView>
@@ -243,7 +323,7 @@ export default function GoalsScreen() {
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>
-                {editGoalId ? 'Edit Goal' : 'New Goal'}
+                {editGoalId ? 'Edit Goal' : 'Add Goal'}
               </Text>
               <TouchableOpacity onPress={closeModal}>
                 <X size={24} color={colors.text} />
@@ -272,35 +352,6 @@ export default function GoalsScreen() {
               numberOfLines={3}
             />
 
-            <Text style={[styles.label, { color: colors.text }]}>Category</Text>
-            <View style={styles.categoryGrid}>
-              {CATEGORIES.map((cat) => (
-                <TouchableOpacity
-                  key={cat}
-                  style={[
-                    styles.categoryChip,
-                    {
-                      backgroundColor:
-                        category === cat ? `${CATEGORY_COLORS[cat]}20` : colors.surface,
-                      borderColor: category === cat ? CATEGORY_COLORS[cat] : colors.border,
-                    },
-                  ]}
-                  onPress={() => setCategory(cat)}
-                >
-                  <Text
-                    style={[
-                      styles.categoryChipText,
-                      {
-                        color: category === cat ? CATEGORY_COLORS[cat] : colors.textSecondary,
-                      },
-                    ]}
-                  >
-                    {cat}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
             <Button title={editGoalId ? 'Update Goal' : 'Create Goal'} onPress={saveGoal} loading={loading} />
           </View>
         </View>
@@ -328,6 +379,19 @@ const createStyles = (colors: any) =>
       fontSize: 16,
       textAlign: 'center',
     },
+    sectionTitle: {
+      fontSize: 18,
+      fontWeight: 'bold',
+      marginBottom: 12,
+      marginTop: 8,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+      marginTop: 8,
+    },
     goalCard: {
       marginBottom: 16,
     },
@@ -335,21 +399,6 @@ const createStyles = (colors: any) =>
       flexDirection: 'row',
       justifyContent: 'space-between',
       marginBottom: 16,
-    },
-    categoryBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      marginBottom: 8,
-    },
-    categoryDot: {
-      width: 8,
-      height: 8,
-      borderRadius: 4,
-      marginRight: 6,
-    },
-    categoryText: {
-      fontSize: 12,
-      fontWeight: '500',
     },
     goalTitle: {
       fontSize: 18,
@@ -450,21 +499,5 @@ const createStyles = (colors: any) =>
       fontSize: 16,
       fontWeight: '600',
       marginBottom: 12,
-    },
-    categoryGrid: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: 8,
-      marginBottom: 24,
-    },
-    categoryChip: {
-      paddingVertical: 8,
-      paddingHorizontal: 16,
-      borderRadius: 20,
-      borderWidth: 1,
-    },
-    categoryChipText: {
-      fontSize: 14,
-      fontWeight: '500',
     },
   });
