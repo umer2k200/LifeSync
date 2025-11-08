@@ -284,7 +284,7 @@ export default function BikeScreen() {
   return (
     <View style={styles.container}>
       <ScreenHeader title="Bike" subtitle="Items & Tasks" onAddPress={() => openEditModal(undefined, activeTab === 'tasks')} />
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 32 }}>
         <View style={styles.tabContainer}>
           <TouchableOpacity
             style={[styles.tab, activeTab === 'items' && styles.activeTab, { backgroundColor: activeTab === 'items' ? colors.primary : colors.surface }]}

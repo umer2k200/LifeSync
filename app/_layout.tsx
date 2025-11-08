@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import type { User } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
@@ -13,6 +12,9 @@ import { NotificationService } from '@/lib/notifications';
 import { NotificationScheduler } from '@/lib/notificationScheduler';
 import { GlobalAlert } from '@/components/StyledAlert';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { AppEventBus } from '@/lib/eventBus';
+import { NotificationProvider, useNotifications } from '@/contexts/NotificationContext';
+import { TelemetryService } from '@/lib/telemetry';
 
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -24,89 +26,105 @@ function RootLayoutNav() {
   const { loading: themeLoading } = useTheme();
   const segments = useSegments();
   const router = useRouter();
-  const lastUserRef = useRef<User | null>(user);
   const [hasOnboardingBeenShown, setHasOnboardingBeenShown] = useState<boolean | null>(null);
+  const splashHiddenRef = useRef(false);
 
-  // Check if onboarding has been shown
+  const hideSplash = useCallback(async () => {
+    if (splashHiddenRef.current) {
+      return;
+    }
+    splashHiddenRef.current = true;
+    try {
+      await SplashScreen.hideAsync();
+    } catch (error) {
+      console.warn('Failed to hide splash screen:', error);
+    }
+  }, []);
+
+  // Check if onboarding has been shown and subscribe to completion events
   useEffect(() => {
+    let isMounted = true;
+
     const checkOnboarding = async () => {
       try {
         const onboardingValue = await AsyncStorage.getItem(ONBOARDING_KEY);
+        if (!isMounted) {
+          return;
+        }
         setHasOnboardingBeenShown(onboardingValue === 'true');
       } catch (error) {
         console.error('Error checking onboarding:', error);
+        if (isMounted) {
         setHasOnboardingBeenShown(false);
+        }
       }
     };
+
     checkOnboarding();
     
-    // Periodically check for completion (catches async saves)
-    const interval = setInterval(async () => {
-      try {
-        const onboardingValue = await AsyncStorage.getItem(ONBOARDING_KEY);
-        if (onboardingValue === 'true' && hasOnboardingBeenShown === false) {
-          setHasOnboardingBeenShown(true);
-        }
-      } catch {
-        // Ignore errors
+    const unsubscribe = AppEventBus.on('onboardingCompleted', () => {
+      if (!isMounted) {
+        return;
       }
-    }, 300);
+          setHasOnboardingBeenShown(true);
+    });
     
-    return () => clearInterval(interval);
-  }, [hasOnboardingBeenShown]);
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   // Hide splash screen when both auth and theme are loaded
   useEffect(() => {
     if (!authLoading && !themeLoading && hasOnboardingBeenShown !== null) {
-      SplashScreen.hideAsync();
+      hideSplash();
     }
-  }, [authLoading, themeLoading, hasOnboardingBeenShown]);
+  }, [authLoading, themeLoading, hasOnboardingBeenShown, hideSplash]);
 
   useEffect(() => {
-    if (authLoading || themeLoading || hasOnboardingBeenShown === null) return;
+    const timeout = setTimeout(() => {
+      hideSplash();
+    }, 5000);
 
-    const inAuthGroup = segments[0] === '(auth)';
-    const isOnboarding = segments[segments.length - 1] === 'onboarding';
-    const currentScreen = segments[segments.length - 1] || '';
+    return () => clearTimeout(timeout);
+  }, [hideSplash]);
+
+  const navigationTarget = useMemo(() => {
+    if (authLoading || themeLoading || hasOnboardingBeenShown === null) {
+      return null;
+    }
+
+    const rootSegment = segments[0] ?? '';
+    const currentScreen = segments[segments.length - 1] ?? '';
+    const inAuthGroup = rootSegment === '(auth)';
+    const isOnboardingScreen = currentScreen === 'onboarding' || rootSegment === 'onboarding';
     const isLoginOrSignup = currentScreen === 'login' || currentScreen === 'signup';
     
-    // Track if user state actually changed (not just navigation)
-    const userChanged = lastUserRef.current !== user;
-    const wasNull = lastUserRef.current === null;
-    lastUserRef.current = user;
-
-    // Show onboarding if it hasn't been shown yet (only if not already navigating to/from it)
-    if (!hasOnboardingBeenShown && !isOnboarding && !user && !inAuthGroup && !isLoginOrSignup) {
-      router.replace('/onboarding');
-      return;
+    if (!hasOnboardingBeenShown && !isOnboardingScreen) {
+      return '/onboarding';
     }
 
-    // If user is not authenticated and onboarding is done, go to login (but not if already on login/signup)
-    if (!user && !inAuthGroup && !isOnboarding && hasOnboardingBeenShown && !isLoginOrSignup) {
-      router.replace('/(auth)/login');
+    if (!user) {
+      if (!inAuthGroup || (!isLoginOrSignup && !isOnboardingScreen)) {
+        return '/(auth)/login';
+      }
+      return null;
+    }
+
+    if (isOnboardingScreen || inAuthGroup) {
+      return '/(tabs)';
+    }
+
+    return null;
+  }, [authLoading, themeLoading, hasOnboardingBeenShown, segments, user]);
+
+  useEffect(() => {
+    if (!navigationTarget) {
       return;
     } 
-    // If user is authenticated and on auth screens
-    if (user && inAuthGroup) {
-      // Redirect if user just signed in (was null, now has user)
-      // OR if user exists and we're on login/signup screens
-      if ((userChanged && wasNull && user) || isLoginOrSignup) {
-        // User just signed in - redirect after short delay to ensure state is settled
-        const timer = setTimeout(() => {
-          // Double-check user still exists before navigating (prevent race condition)
-          if (user) {
-            router.replace('/(tabs)');
-          }
-        }, 100);
-        return () => clearTimeout(timer);
-      } else if (!isLoginOrSignup) {
-        // Not on login/signup but in auth group - redirect immediately
-        if (user) {
-          router.replace('/(tabs)');
-        }
-      }
-    }
-  }, [user, authLoading, themeLoading, hasOnboardingBeenShown, segments, router]);
+    router.replace(navigationTarget as any);
+  }, [navigationTarget, router]);
 
   useEffect(() => {
     SyncService.initialize();
@@ -114,6 +132,7 @@ function RootLayoutNav() {
 
   // Initialize push notifications when user is logged in
   const notificationsInitializedRef = useRef<string | null>(null);
+  const { status: notificationStatus, refreshPermissions } = useNotifications();
   
   useEffect(() => {
     if (!user) {
@@ -132,8 +151,12 @@ function RootLayoutNav() {
 
     const initializeNotifications = async () => {
       try {
-        // Check if notifications are enabled first
-        const hasPermission = await NotificationService.areNotificationsEnabled();
+        // Ensure we have the latest permission state
+        let hasPermission = notificationStatus === 'granted';
+        if (notificationStatus === 'unknown') {
+          hasPermission = await NotificationService.areNotificationsEnabled();
+          await refreshPermissions();
+        }
         
         // Check if cancelled before proceeding
         if (isCancelled) return;
@@ -186,7 +209,7 @@ function RootLayoutNav() {
         cleanup();
       }
     };
-  }, [user, router]);
+  }, [user, router, notificationStatus, refreshPermissions]);
 
   return (
     <>
@@ -204,13 +227,18 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   useFrameworkReady();
+  useEffect(() => {
+    TelemetryService.initialize();
+  }, []);
 
   return (
     <ErrorBoundary>
       <ThemeProvider>
         <CurrencyProvider>
           <AuthProvider>
+            <NotificationProvider>
             <RootLayoutNav />
+            </NotificationProvider>
           </AuthProvider>
         </CurrencyProvider>
       </ThemeProvider>

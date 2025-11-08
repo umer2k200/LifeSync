@@ -53,6 +53,17 @@ type PrayerName = 'Fajr' | 'Dhuhr' | 'Asr' | 'Maghrib' | 'Isha';
 export default function IslamicScreen() {
   const { colors } = useTheme();
   const { user } = useAuth();
+  const getDefaultCharityDate = useCallback(() => {
+    const today = new Date();
+    const dayOfWeek = today.getDay();
+    let daysUntilThursday = (4 - dayOfWeek + 7) % 7;
+    if (daysUntilThursday === 0) {
+      daysUntilThursday = 7;
+    }
+    const nextDate = new Date(today);
+    nextDate.setDate(today.getDate() + daysUntilThursday);
+    return format(nextDate, 'yyyy-MM-dd');
+  }, []);
   const [tasbeehs, setTasbeehs] = useState<Tasbeeh[]>([]);
   const [tasbeehModalVisible, setTasbeehModalVisible] = useState(false);
   const [tasbeehName, setTasbeehName] = useState('');
@@ -78,6 +89,7 @@ export default function IslamicScreen() {
   const [charityTitle, setCharityTitle] = useState('');
   const [charityDescription, setCharityDescription] = useState('');
   const [charityEnabled, setCharityEnabled] = useState(false);
+  const [charityDate, setCharityDate] = useState(getDefaultCharityDate());
   const [charityHour, setCharityHour] = useState('18');
   const [charityMinute, setCharityMinute] = useState('0');
   const [loading, setLoading] = useState(true);
@@ -231,6 +243,7 @@ export default function IslamicScreen() {
     await loadTasbeehs();
   };
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const deleteTasbeeh = async (tasbeeh: Tasbeeh) => {
     if (!user) return;
 
@@ -350,6 +363,7 @@ export default function IslamicScreen() {
         setCharityTitle(reminder.title);
         setCharityDescription(reminder.description || '');
         setCharityEnabled(reminder.is_active);
+        setCharityDate(reminder.next_reminder_date || getDefaultCharityDate());
         setCharityHour(reminder.reminder_hour?.toString() || '18');
         setCharityMinute(reminder.reminder_minute?.toString() || '0');
       } else {
@@ -357,6 +371,7 @@ export default function IslamicScreen() {
         setCharityTitle('');
         setCharityDescription('');
         setCharityEnabled(false);
+        setCharityDate(getDefaultCharityDate());
         setCharityHour('18');
         setCharityMinute('0');
       }
@@ -380,12 +395,20 @@ export default function IslamicScreen() {
 
       // Cancel or schedule notification
       if (newEnabledState) {
-        // Schedule notification for Thursday
+        // Schedule notification for the selected weekday
         const hour = charityReminder.reminder_hour || 18;
         const minute = charityReminder.reminder_minute || 0;
-        const notificationId = await NotificationService.scheduleThursdayCharityReminder(
+        const [year, month, day] = charityReminder.next_reminder_date
+          ? charityReminder.next_reminder_date.split('-').map((value) => parseInt(value, 10))
+          : [];
+        const reminderDate = !charityReminder.next_reminder_date || year === undefined || Number.isNaN(year)
+          ? new Date()
+          : new Date(year, (month || 1) - 1, day || 1, hour, minute, 0, 0);
+        const weekday = reminderDate.getDay();
+        const notificationId = await NotificationService.scheduleWeeklyCharityReminder(
           charityReminder.title,
           charityReminder.description || 'Give charity today and earn blessings!',
+          weekday,
           hour,
           minute
         );
@@ -401,7 +424,13 @@ export default function IslamicScreen() {
               notification_id: notificationId,
             }
           );
-          showSuccess('Success', 'Charity reminder enabled! You will receive notifications every Thursday.');
+          showSuccess(
+            'Success',
+            `Charity reminder enabled! We will remind you every ${format(reminderDate, 'EEEE')} at ${format(
+              reminderDate,
+              'hh:mm a'
+            )}.`
+          );
         } else {
           setCharityEnabled(false);
           showError('Error', 'Failed to schedule notification. Please check your notification permissions.');
@@ -452,20 +481,32 @@ export default function IslamicScreen() {
       return;
     }
 
+    // Validate date input
+    const dateParts = charityDate.split('-').map((part) => parseInt(part, 10));
+    if (dateParts.length !== 3 || dateParts.some((part) => isNaN(part))) {
+      showError('Error', 'Date must be in YYYY-MM-DD format');
+      return;
+    }
+
+    const [year, month, day] = dateParts;
+    const reminderDateTime = new Date(year, month - 1, day, hour, minute, 0, 0);
+
+    if (Number.isNaN(reminderDateTime.getTime())) {
+      showError('Error', 'Please enter a valid date');
+      return;
+    }
+
+    if (reminderDateTime.getTime() <= Date.now()) {
+      showError('Error', 'Please choose a future date and time for your reminder');
+      return;
+    }
+
+    const formattedDate = format(reminderDateTime, 'yyyy-MM-dd');
+    const weekday = reminderDateTime.getDay();
+
     try {
       // First, check if reminder already exists
       const existingData = await SyncService.fetchWithFallback('charity_reminders', user.id) as CharityReminder[];
-      
-      // Calculate next Thursday
-      const today = new Date();
-      const dayOfWeek = today.getDay(); // 0 = Sunday, 4 = Thursday
-      let daysUntilThursday = (4 - dayOfWeek + 7) % 7;
-      // If it's Thursday and past the reminder time, schedule for next week
-      if (daysUntilThursday === 0 && (today.getHours() > hour || (today.getHours() === hour && today.getMinutes() >= minute))) {
-        daysUntilThursday = 7;
-      }
-      const nextThursday = new Date(today);
-      nextThursday.setDate(today.getDate() + daysUntilThursday);
       
       if (existingData && existingData.length > 0 && existingData[0].id) {
         const existingReminder = existingData[0];
@@ -474,7 +515,7 @@ export default function IslamicScreen() {
           title: charityTitle,
           description: charityDescription || '',
           frequency: 'weekly',
-          next_reminder_date: nextThursday.toISOString().split('T')[0],
+          next_reminder_date: formattedDate,
           reminder_hour: hour,
           reminder_minute: minute,
         };
@@ -487,9 +528,10 @@ export default function IslamicScreen() {
           await NotificationService.cancelNotification(existingReminder.notification_id);
           
           // Schedule new notification with updated time
-          const notificationId = await NotificationService.scheduleThursdayCharityReminder(
+          const notificationId = await NotificationService.scheduleWeeklyCharityReminder(
             charityTitle,
             charityDescription || 'Give charity today and earn blessings!',
+            weekday,
             hour,
             minute
           );
@@ -498,7 +540,13 @@ export default function IslamicScreen() {
             await SyncService.updateWithFallback('charity_reminders', user.id, existingData[0].id, {
               notification_id: notificationId,
             });
-            showSuccess('Success', 'Charity reminder updated! Notification rescheduled for the new time.');
+            showSuccess(
+              'Success',
+              `Charity reminder updated! We will remind you every ${format(reminderDateTime, 'EEEE')} at ${format(
+                reminderDateTime,
+                'hh:mm a'
+              )}.`
+            );
           } else {
             showSuccess('Success', 'Reminder updated, but failed to reschedule notification. Please re-enable it.');
             await SyncService.updateWithFallback('charity_reminders', user.id, existingData[0].id, {
@@ -506,7 +554,13 @@ export default function IslamicScreen() {
             });
           }
         } else {
-          showSuccess('Success', 'Charity reminder updated successfully!');
+          showSuccess(
+            'Success',
+            `Charity reminder updated for ${format(reminderDateTime, 'EEE, MMM dd')} at ${format(
+              reminderDateTime,
+              'hh:mm a'
+            )}.`
+          );
         }
         setCharityModalVisible(false);
         await loadCharityReminder();
@@ -516,7 +570,7 @@ export default function IslamicScreen() {
           title: charityTitle,
           description: charityDescription || '',
           frequency: 'weekly',
-          next_reminder_date: nextThursday.toISOString().split('T')[0],
+          next_reminder_date: formattedDate,
           is_active: false,
           reminder_hour: hour,
           reminder_minute: minute,
@@ -543,9 +597,10 @@ export default function IslamicScreen() {
                 text: 'Enable Now',
                 onPress: async () => {
                   // Schedule and enable the notification
-                  const notificationId = await NotificationService.scheduleThursdayCharityReminder(
+                  const notificationId = await NotificationService.scheduleWeeklyCharityReminder(
                     charityTitle,
                     charityDescription || 'Give charity today and earn blessings!',
+                    weekday,
                     hour,
                     minute
                   );
@@ -561,7 +616,13 @@ export default function IslamicScreen() {
                       }
                     );
                     await loadCharityReminder();
-                    showSuccess('Success', 'Notifications enabled! You will receive a reminder every Thursday.');
+                    showSuccess(
+                      'Success',
+                      `Notifications enabled! We will remind you every ${format(reminderDateTime, 'EEEE')} at ${format(
+                        reminderDateTime,
+                        'hh:mm a'
+                      )}.`
+                    );
                   } else {
                     showError('Error', 'Failed to enable notifications. Please check your notification permissions in settings.');
                   }
@@ -587,6 +648,62 @@ export default function IslamicScreen() {
   const prayerStats = getPrayerStats();
   const hijriDate = getHijriDateShort();
   const calendarDays = getPrayerCalendarDays();
+  const reminderSummary = charityReminder
+    ? (() => {
+        try {
+          const [year, month, day] = charityReminder.next_reminder_date
+            ? charityReminder.next_reminder_date.split('-').map((value) => parseInt(value, 10))
+            : [];
+          if (!year || Number.isNaN(year)) {
+            return null;
+          }
+          const reminderDate = new Date(
+            year,
+            (month || 1) - 1,
+            day || 1,
+            charityReminder.reminder_hour ?? 18,
+            charityReminder.reminder_minute ?? 0,
+            0,
+            0
+          );
+          return {
+            date: reminderDate,
+            dayLabel: format(reminderDate, 'EEEE'),
+            dateLabel: format(reminderDate, 'MMM dd, yyyy'),
+            timeLabel: format(reminderDate, 'hh:mm a'),
+          };
+        } catch (error) {
+          console.error('Error formatting reminder summary:', error);
+          return null;
+        }
+      })()
+    : null;
+
+  const previewReminderSummary = (() => {
+    const hour = parseInt(charityHour, 10);
+    const minute = parseInt(charityMinute, 10);
+    const [year, month, day] = charityDate.split('-').map((value) => parseInt(value, 10));
+    if (
+      Number.isNaN(hour) ||
+      Number.isNaN(minute) ||
+      Number.isNaN(year) ||
+      Number.isNaN(month) ||
+      Number.isNaN(day)
+    ) {
+      return null;
+    }
+
+    const previewDate = new Date(year, month - 1, day, hour, minute, 0, 0);
+    if (Number.isNaN(previewDate.getTime())) {
+      return null;
+    }
+
+    return {
+      dayLabel: format(previewDate, 'EEEE'),
+      dateLabel: format(previewDate, 'MMM dd, yyyy'),
+      timeLabel: format(previewDate, 'hh:mm a'),
+    };
+  })();
 
   return (
     <View style={styles.container}>
@@ -770,9 +887,16 @@ export default function IslamicScreen() {
               <View style={styles.charityProgressRow}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.charityLabel, { color: colors.textSecondary }]}>Frequency:</Text>
-                  <Text style={[styles.charityValue, { color: colors.text }]}>
-                    Every Thursday at {charityReminder.reminder_hour !== undefined ? charityReminder.reminder_hour.toString().padStart(2, '0') : '18'}:{charityReminder.reminder_minute !== undefined ? charityReminder.reminder_minute.toString().padStart(2, '0') : '00'}
-          </Text>
+                <Text style={[styles.charityValue, { color: colors.text }]}>
+                  {reminderSummary
+                    ? `Every ${reminderSummary.dayLabel} at ${reminderSummary.timeLabel}`
+                    : 'Schedule not set'}
+                </Text>
+                {reminderSummary && (
+                  <Text style={[styles.charityDescription, { color: colors.textSecondary, marginTop: 4 }]}>
+                    Next reminder: {reminderSummary.dateLabel}
+                  </Text>
+                )}
                 </View>
               </View>
               
@@ -995,7 +1119,22 @@ export default function IslamicScreen() {
               numberOfLines={3}
             />
 
-            <Text style={[styles.inputLabel, { color: colors.text }]}>Reminder Time (Thursday)</Text>
+            <Text style={[styles.inputLabel, { color: colors.text }]}>Reminder Date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
+              placeholder={format(new Date(), 'yyyy-MM-dd')}
+              placeholderTextColor={colors.textSecondary}
+              value={charityDate}
+              onChangeText={setCharityDate}
+              keyboardType="numbers-and-punctuation"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={[styles.inputHint, { color: colors.textSecondary }]}>
+              We&apos;ll repeat this reminder every week on the same weekday.
+            </Text>
+
+            <Text style={[styles.inputLabel, { color: colors.text }]}>Reminder Time</Text>
             <View style={styles.timePickerContainer}>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.timeLabel, { color: colors.textSecondary }]}>Hour (0-23)</Text>
@@ -1029,7 +1168,9 @@ export default function IslamicScreen() {
             <View style={styles.charityInfoBox}>
               <Bell size={20} color={colors.primary} />
               <Text style={[styles.charityInfoText, { color: colors.textSecondary }]}>
-                You&apos;ll receive a reminder every Thursday at {charityHour.padStart(2, '0')}:{charityMinute.padStart(2, '0')}
+                {previewReminderSummary
+                  ? `You’ll receive a reminder every ${previewReminderSummary.dayLabel} at ${previewReminderSummary.timeLabel}.`
+                  : 'Choose a date and time to preview your weekly reminder schedule.'}
               </Text>
             </View>
 
@@ -1401,6 +1542,11 @@ const createStyles = (colors: any) =>
       padding: 16,
       fontSize: 16,
       marginBottom: 8,
+    },
+    inputHint: {
+      fontSize: 12,
+      marginTop: -4,
+      marginBottom: 12,
     },
     charityCard: {
       marginBottom: 16,

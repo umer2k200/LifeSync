@@ -125,11 +125,9 @@ export default function WorkoutScreen() {
 
   // Meal modal
   const [mealModalVisible, setMealModalVisible] = useState(false);
-  const [mealName, setMealName] = useState('');
-  const [mealCalories, setMealCalories] = useState('0');
-  const [mealProtein, setMealProtein] = useState('0');
-  const [mealCarbs, setMealCarbs] = useState('0');
-  const [mealFats, setMealFats] = useState('0');
+  const [mealLabel, setMealLabel] = useState('');
+  const [mealDetails, setMealDetails] = useState('');
+  const [mealTimeText, setMealTimeText] = useState('06:00');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -566,26 +564,52 @@ export default function WorkoutScreen() {
   };
 
   // Meal functions
+  const closeMealModal = () => {
+    setMealModalVisible(false);
+    setMealLabel('');
+    setMealDetails('');
+    setMealTimeText('06:00');
+  };
+
   const createMeal = async () => {
-    if (!mealName.trim() || !user) {
-      showError('Error', 'Please enter a meal name');
+    if (!user) return;
+    if (!mealLabel.trim() || !mealDetails.trim()) {
+      showError('Error', 'Please enter both a meal period and the foods you plan to have.');
       return;
     }
 
+    const [hoursText, minutesText] = mealTimeText.split(':');
+    const hours = Number(hoursText);
+    const minutes = Number(minutesText);
+
+    if (
+      Number.isNaN(hours) ||
+      Number.isNaN(minutes) ||
+      hours < 0 ||
+      hours > 23 ||
+      minutes < 0 ||
+      minutes > 59
+    ) {
+      showError('Invalid time', 'Please enter a valid time in 24h format (e.g. 06:15).');
+      return;
+    }
+
+    const planTime = new Date();
+    planTime.setHours(hours);
+    planTime.setMinutes(minutes);
+    planTime.setSeconds(0);
+    planTime.setMilliseconds(0);
+
     await SyncService.insertWithFallback('meals', user.id, {
-      name: mealName.trim(),
-      calories: parseFloat(mealCalories) || 0,
-      protein: parseFloat(mealProtein) || 0,
-      carbs: parseFloat(mealCarbs) || 0,
-      fats: parseFloat(mealFats) || 0,
-      meal_time: new Date().toISOString(),
+      name: `${mealLabel.trim()} : ${mealDetails.trim()}`,
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fats: 0,
+      meal_time: planTime.toISOString(),
     });
-    setMealModalVisible(false);
-    setMealName('');
-    setMealCalories('0');
-    setMealProtein('0');
-    setMealCarbs('0');
-    setMealFats('0');
+
+    closeMealModal();
     loadData();
   };
 
@@ -701,23 +725,20 @@ export default function WorkoutScreen() {
     return Math.max(...logs.map((l) => Number(l.weight) || 0));
   };
 
-  const getTodaysMeals = () => {
-    const today = format(new Date(), 'yyyy-MM-dd');
-    return meals.filter((meal) => format(new Date(meal.meal_time), 'yyyy-MM-dd') === today);
-  };
+  const dietPlan = [...meals].sort(
+    (a, b) => new Date(a.meal_time).getTime() - new Date(b.meal_time).getTime()
+  );
 
-  const getTodaysStats = () => {
-    const todaysMeals = getTodaysMeals();
+  const parseDietEntry = (meal: Meal) => {
+    const [label, ...rest] = meal.name.split(':');
+    const details = rest.join(':').trim();
     return {
-      calories: todaysMeals.reduce((sum, meal) => sum + meal.calories, 0),
-      protein: todaysMeals.reduce((sum, meal) => sum + meal.protein, 0),
-      carbs: todaysMeals.reduce((sum, meal) => sum + meal.carbs, 0),
-      fats: todaysMeals.reduce((sum, meal) => sum + meal.fats, 0),
+      label: label.trim(),
+      details,
     };
   };
 
   const styles = createStyles(colors);
-  const todaysStats = getTodaysStats();
 
   return (
     <View style={styles.container}>
@@ -1163,38 +1184,8 @@ export default function WorkoutScreen() {
           </>
         ) : (
           <>
-            <Card style={styles.statsCard}>
-              <Text style={[styles.statsTitle, { color: colors.text }]}>Today&apos;s Nutrition</Text>
-              <View style={styles.statsGrid}>
-                <View style={styles.statItem}>
-                  <Text style={[styles.statValue, { color: colors.primary }]}>
-                    {todaysStats.calories.toFixed(0)}
-                  </Text>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Calories</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={[styles.statValue, { color: colors.success }]}>
-                    {todaysStats.protein.toFixed(0)}g
-                  </Text>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Protein</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={[styles.statValue, { color: colors.secondary }]}>
-                    {todaysStats.carbs.toFixed(0)}g
-                  </Text>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Carbs</Text>
-                </View>
-                <View style={styles.statItem}>
-                  <Text style={[styles.statValue, { color: '#F59E0B' }]}>
-                    {todaysStats.fats.toFixed(0)}g
-                  </Text>
-                  <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Fats</Text>
-                </View>
-              </View>
-            </Card>
-
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Today&apos;s Meals</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Diet Plan</Text>
               <TouchableOpacity
                 style={[styles.addButton, { backgroundColor: colors.primary }]}
                 onPress={() => setMealModalVisible(true)}
@@ -1203,90 +1194,49 @@ export default function WorkoutScreen() {
               </TouchableOpacity>
             </View>
 
-            {meals.filter((meal) =>
-              format(new Date(meal.meal_time), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd')
-            ).length === 0 ? (
+            {dietPlan.length === 0 ? (
               <Card style={styles.emptyCard}>
                 <UtensilsCrossed size={48} color={colors.textSecondary} />
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  No meals logged today. Add your first meal!
+                  No diet items yet. Add your meal plan above.
                 </Text>
               </Card>
             ) : (
-              meals
-                .filter((meal) => format(new Date(meal.meal_time), 'yyyy-MM-dd') === format(new Date(), 'yyyy-MM-dd'))
-                .map((meal) => (
-                  <Card key={meal.id} style={styles.mealCard}>
-                    <View style={styles.mealHeader}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.mealName, { color: colors.text }]}>{meal.name}</Text>
-                        <Text style={[styles.mealTime, { color: colors.textSecondary }]}>
-                          {format(new Date(meal.meal_time), 'HH:mm')}
+              <Card style={styles.dietCard}>
+                {dietPlan.map((meal, index) => {
+                  const { label, details } = parseDietEntry(meal);
+                  return (
+                    <View key={meal.id}>
+                      <View style={styles.dietItem}>
+                        <View style={[styles.dietBullet, { borderColor: colors.primary }]} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.dietLabel, { color: colors.text }]}>
+                            {label || 'Meal'}
+                          </Text>
+                          {details ? (
+                            <Text style={[styles.dietDetails, { color: colors.textSecondary }]}>
+                              {details}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <Text style={[styles.dietTime, { color: colors.textSecondary }]}>
+                          {format(new Date(meal.meal_time), 'h:mm a')}
                         </Text>
+                        <TouchableOpacity
+                          style={[styles.deleteMealButton, { backgroundColor: colors.error + '20' }]}
+                          onPress={() => deleteMeal(meal.id)}
+                        >
+                          <Trash2 size={18} color={colors.error} />
+                        </TouchableOpacity>
                       </View>
-                      <TouchableOpacity
-                        style={[styles.deleteMealButton, { backgroundColor: colors.error + '20' }]}
-                        onPress={() => deleteMeal(meal.id)}
-                      >
-                        <Trash2 size={18} color={colors.error} />
-                      </TouchableOpacity>
+                      {index < dietPlan.length - 1 && (
+                        <View style={[styles.dietDivider, { backgroundColor: colors.border }]} />
+                      )}
                     </View>
-                    <View style={styles.macroRow}>
-                      <Text style={[styles.macroText, { color: colors.textSecondary }]}>
-                        {meal.calories} cal
-                      </Text>
-                      <Text style={[styles.macroText, { color: colors.textSecondary }]}>
-                        P: {meal.protein}g
-                      </Text>
-                      <Text style={[styles.macroText, { color: colors.textSecondary }]}>
-                        C: {meal.carbs}g
-                      </Text>
-                      <Text style={[styles.macroText, { color: colors.textSecondary }]}>
-                        F: {meal.fats}g
-                      </Text>
-                    </View>
-                  </Card>
-                ))
+                  );
+                })}
+              </Card>
             )}
-
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Meals</Text>
-            </View>
-            {meals
-              .filter((meal) => format(new Date(meal.meal_time), 'yyyy-MM-dd') !== format(new Date(), 'yyyy-MM-dd'))
-              .slice(0, 5)
-              .map((meal) => (
-                <Card key={meal.id} style={styles.mealCard}>
-                  <View style={styles.mealHeader}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.mealName, { color: colors.text }]}>{meal.name}</Text>
-                      <Text style={[styles.mealTime, { color: colors.textSecondary }]}>
-                        {format(new Date(meal.meal_time), 'MMM dd, yyyy HH:mm')}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={[styles.deleteMealButton, { backgroundColor: colors.error + '20' }]}
-                      onPress={() => deleteMeal(meal.id)}
-                    >
-                      <Trash2 size={18} color={colors.error} />
-                    </TouchableOpacity>
-                  </View>
-                  <View style={styles.macroRow}>
-                    <Text style={[styles.macroText, { color: colors.textSecondary }]}>
-                      {meal.calories} cal
-                    </Text>
-                    <Text style={[styles.macroText, { color: colors.textSecondary }]}>
-                      P: {meal.protein}g
-                    </Text>
-                    <Text style={[styles.macroText, { color: colors.textSecondary }]}>
-                      C: {meal.carbs}g
-                    </Text>
-                    <Text style={[styles.macroText, { color: colors.textSecondary }]}>
-                      F: {meal.fats}g
-                    </Text>
-                  </View>
-                </Card>
-              ))}
           </>
         )}
 
@@ -1400,71 +1350,49 @@ export default function WorkoutScreen() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Log Meal</Text>
-              <TouchableOpacity onPress={() => setMealModalVisible(false)}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Add Diet Item</Text>
+              <TouchableOpacity onPress={closeMealModal}>
                 <X size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
 
             <TextInput
               style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
-              placeholder="Meal name"
+              placeholder="Meal period (e.g. Morning)"
               placeholderTextColor={colors.textSecondary}
-              value={mealName}
-              onChangeText={setMealName}
+              value={mealLabel}
+              onChangeText={setMealLabel}
             />
 
-            <View style={styles.inputRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.label, { color: colors.text }]}>Calories</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
-                  placeholder="0"
-                  placeholderTextColor={colors.textSecondary}
-                  value={mealCalories}
-                  onChangeText={setMealCalories}
-                  keyboardType="numeric"
-                />
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={[styles.label, { color: colors.text }]}>Protein (g)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
-                  placeholder="0"
-                  placeholderTextColor={colors.textSecondary}
-                  value={mealProtein}
-                  onChangeText={setMealProtein}
-                  keyboardType="numeric"
-                />
-              </View>
-            </View>
+            <Text style={[styles.label, { color: colors.text, marginTop: 12 }]}>Foods / Details</Text>
+            <TextInput
+              style={[
+                styles.input,
+                styles.textArea,
+                { backgroundColor: colors.surface, color: colors.text },
+              ]}
+              placeholder="Example: Bread + peanut butter + 2 boiled eggs + potato"
+              placeholderTextColor={colors.textSecondary}
+              value={mealDetails}
+              onChangeText={setMealDetails}
+              multiline
+              numberOfLines={3}
+            />
 
-            <View style={styles.inputRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.label, { color: colors.text }]}>Carbs (g)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
-                  placeholder="0"
-                  placeholderTextColor={colors.textSecondary}
-                  value={mealCarbs}
-                  onChangeText={setMealCarbs}
-                  keyboardType="numeric"
-                />
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={[styles.label, { color: colors.text }]}>Fats (g)</Text>
-                <TextInput
-                  style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
-                  placeholder="0"
-                  placeholderTextColor={colors.textSecondary}
-                  value={mealFats}
-                  onChangeText={setMealFats}
-                  keyboardType="numeric"
-                />
-              </View>
-            </View>
+            <Text style={[styles.label, { color: colors.text, marginTop: 12 }]}>Time (24h)</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.surface, color: colors.text }]}
+              placeholder="06:15"
+              placeholderTextColor={colors.textSecondary}
+              value={mealTimeText}
+              onChangeText={setMealTimeText}
+              keyboardType="numeric"
+            />
+            <Text style={[styles.hintText, { color: colors.textSecondary }]}>
+              Use HH:MM format. We&apos;ll sort your plan automatically.
+            </Text>
 
-            <Button title="Log Meal" onPress={createMeal} />
+            <Button title="Save Plan Item" onPress={createMeal} />
           </View>
         </View>
       </Modal>
@@ -2067,22 +1995,44 @@ const createStyles = (colors: any) =>
     statLabel: {
       fontSize: 12,
     },
-    mealCard: {
-      marginBottom: 12,
+    dietCard: {
+      marginBottom: 16,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      gap: 4,
     },
-    mealHeader: {
+    dietItem: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 8,
+      alignItems: 'flex-start',
+      gap: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 4,
     },
-    mealName: {
+    dietBullet: {
+      width: 12,
+      height: 12,
+      borderRadius: 6,
+      borderWidth: 2,
+      marginTop: 6,
+    },
+    dietLabel: {
       fontSize: 16,
       fontWeight: '600',
-      marginBottom: 4,
     },
-    mealTime: {
+    dietDetails: {
+      fontSize: 14,
+      marginTop: 4,
+    },
+    dietTime: {
       fontSize: 12,
+      fontWeight: '600',
+      marginRight: 12,
+      alignSelf: 'center',
+    },
+    dietDivider: {
+      height: 1,
+      marginHorizontal: 12,
+      opacity: 0.5,
     },
     deleteMealButton: {
       width: 36,
@@ -2090,13 +2040,6 @@ const createStyles = (colors: any) =>
       borderRadius: 8,
       alignItems: 'center',
       justifyContent: 'center',
-    },
-    macroRow: {
-      flexDirection: 'row',
-      gap: 16,
-    },
-    macroText: {
-      fontSize: 12,
     },
     modalOverlay: {
       flex: 1,

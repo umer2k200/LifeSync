@@ -20,6 +20,7 @@ import {
   ChevronLeft,
 } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppEventBus } from '@/lib/eventBus';
 
 const { width } = Dimensions.get('window');
 
@@ -116,15 +117,18 @@ export default function OnboardingScreen() {
       // Only navigate if we confirmed it was saved
       if (saved === 'true') {
         // Use a slight delay to ensure state propagation
+        AppEventBus.emit('onboardingCompleted', undefined);
         setTimeout(() => {
           router.replace('/(auth)/login');
         }, 200);
       } else {
         // If still not saved, try navigating anyway
+        AppEventBus.emit('onboardingCompleted', undefined);
         router.replace('/(auth)/login');
       }
     } catch (error) {
       console.error('Error saving onboarding completion:', error);
+      AppEventBus.emit('onboardingCompleted', undefined);
       // Even if saving fails, navigate to login
       router.replace('/(auth)/login');
     }

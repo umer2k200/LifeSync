@@ -133,11 +133,12 @@ export class NotificationService {
   }
 
   /**
-   * Schedule a recurring Thursday charity reminder
+   * Schedule a recurring weekly charity reminder on a specific weekday
    */
-  static async scheduleThursdayCharityReminder(
+  static async scheduleWeeklyCharityReminder(
     title: string,
     description: string,
+    weekday: number,
     hour: number = 18,
     minute: number = 0
   ): Promise<string | null> {
@@ -148,7 +149,9 @@ export class NotificationService {
         return null;
       }
 
-      // Schedule notification for every Thursday at specified time
+      const normalizedWeekday = Math.max(0, Math.min(6, weekday));
+
+      // Schedule notification for the chosen weekday at the specified time
       const identifier = await Notifications.scheduleNotificationAsync({
         content: {
           title,
@@ -163,7 +166,7 @@ export class NotificationService {
         },
         trigger: {
           type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-          weekday: 4, // Thursday (1 = Sunday, 4 = Thursday)
+          weekday: normalizedWeekday,
           hour,
           minute,
         },
@@ -171,9 +174,21 @@ export class NotificationService {
 
       return identifier;
     } catch (error) {
-      console.error('Error scheduling Thursday charity reminder:', error);
+      console.error('Error scheduling weekly charity reminder:', error);
       return null;
     }
+  }
+
+  /**
+   * Backwards-compatible helper for Thursday reminders
+   */
+  static async scheduleThursdayCharityReminder(
+    title: string,
+    description: string,
+    hour: number = 18,
+    minute: number = 0
+  ): Promise<string | null> {
+    return this.scheduleWeeklyCharityReminder(title, description, 4, hour, minute);
   }
 
   /**

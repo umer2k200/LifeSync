@@ -19,10 +19,10 @@ import {
   WifiOff,
   Settings,
   Flame,
-  AlertCircle,
   Clock,
   Circle,
   Menu,
+  ClipboardList,
 } from 'lucide-react-native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useCurrency } from '@/contexts/CurrencyContext';
@@ -64,14 +64,14 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<QuickStat[]>([]);
-  const [overdueTasks, setOverdueTasks] = useState<Task[]>([]);
+  const [remainingTasks, setRemainingTasks] = useState<Task[]>([]);
+  const [overdueCount, setOverdueCount] = useState(0);
   const [habitsNotDone, setHabitsNotDone] = useState<Habit[]>([]);
   const [habitStreak, setHabitStreak] = useState(0);
   const [prayerStreak, setPrayerStreak] = useState(0);
   const [completedHabits, setCompletedHabits] = useState(0);
   const [totalHabits, setTotalHabits] = useState(0);
   const [prayersCompleted, setPrayersCompleted] = useState(0);
-
   useEffect(() => {
     setIsOnline(SyncService.getConnectionStatus());
     loadStats();
@@ -193,18 +193,25 @@ export default function HomeScreen() {
 
       // Fix stats calculation
       const activeGoals = goalsData.filter((g: any) => !g.is_completed).length;
-      const todayTasksCount = tasksData.filter((t: any) => {
-        if (!t.due_date) return false;
-        return isToday(parseISO(t.due_date));
-      }).length;
-      const monthlyExpenses = expensesData.reduce((sum: number, e: any) => sum + Number(e.amount), 0);
-
-      // Overdue tasks
-      const overdue = (tasksData as Task[]).filter((t: Task) => {
-        if (t.is_completed || !t.due_date) return false;
-        return isPast(parseISO(t.due_date)) && !isToday(parseISO(t.due_date));
+      const tasksList = tasksData as Task[];
+      const remaining = tasksList.filter((t) => !t.is_completed);
+      remaining.sort((a, b) => {
+        const getTime = (task: Task) => {
+          if (!task.due_date) return Number.MAX_SAFE_INTEGER;
+          return parseISO(task.due_date).getTime();
+        };
+        return getTime(a) - getTime(b);
       });
-      setOverdueTasks(overdue.slice(0, 5)); // Show top 5
+      setRemainingTasks(remaining);
+      const overdue = remaining.filter(
+        (t) => t.due_date && isPast(parseISO(t.due_date)) && !isToday(parseISO(t.due_date))
+      );
+      setOverdueCount(overdue.length);
+
+      const monthlyExpenses = (expensesData as any[]).reduce(
+        (sum: number, e: any) => sum + Number(e.amount),
+        0
+      );
 
       // Habits not done today
       const completedHabitIds = habitLogsData.map((log: any) => log.habit_id);
@@ -233,8 +240,8 @@ export default function HomeScreen() {
         },
         {
           icon: CheckCircle2,
-          label: 'Tasks Today',
-          value: todayTasksCount,
+          label: 'Tasks Remaining',
+          value: remaining.length,
           color: colors.secondary,
           route: '/(tabs)/tasks',
         },
@@ -355,58 +362,85 @@ export default function HomeScreen() {
           </Card>
         </View>
 
-        {/* Overdue Tasks */}
-        {overdueTasks.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <AlertCircle size={20} color={colors.error} />
-              <Text style={[styles.sectionTitle, { color: colors.text }]}>
-                Overdue Tasks ({overdueTasks.length})
-              </Text>
-            </View>
-            <Card style={styles.tasksCard}>
-              {overdueTasks.map((task) => (
-                <TouchableOpacity
-                  key={task.id}
-                  style={styles.taskItem}
-                  onPress={() => router.push('/(tabs)/tasks' as any)}
-                >
-                  <View style={styles.taskItemLeft}>
-                    <View
-                      style={[
-                        styles.priorityDot,
-                        {
-                          backgroundColor:
-                            task.priority === 'high'
-                              ? colors.error
-                              : task.priority === 'medium'
-                              ? colors.accent
-                              : colors.success,
-                        },
-                      ]}
-                    />
-                    <Text style={[styles.taskTitle, { color: colors.text }]} numberOfLines={1}>
-                      {task.title}
-                    </Text>
-                  </View>
-                  {task.due_date && (
-                    <Text style={[styles.taskDueDate, { color: colors.textSecondary }]}>
-                      {format(parseISO(task.due_date), 'MMM d')}
-                    </Text>
-                  )}
-                </TouchableOpacity>
-              ))}
-              {overdueTasks.length >= 5 && (
-                <TouchableOpacity
-                  style={styles.viewAllButton}
-                  onPress={() => router.push('/(tabs)/tasks' as any)}
-                >
-                  <Text style={[styles.viewAllText, { color: colors.primary }]}>View All Tasks</Text>
-                </TouchableOpacity>
-              )}
-            </Card>
+        {/* Remaining Tasks */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <ClipboardList size={20} color={colors.secondary} />
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              Remaining Tasks ({remainingTasks.length})
+            </Text>
           </View>
-        )}
+          <Card style={styles.tasksCard}>
+            {remainingTasks.length === 0 ? (
+              <Text style={[styles.taskEmptyText, { color: colors.textSecondary }]}>
+                You&apos;re all caught up! Add a new task to stay ahead.
+              </Text>
+            ) : (
+              remainingTasks.slice(0, 5).map((task) => {
+                const hasDueDate = Boolean(task.due_date);
+                const dueDate = hasDueDate ? parseISO(task.due_date as string) : null;
+                const isTaskOverdue = dueDate ? isPast(dueDate) && !isToday(dueDate) : false;
+                const isTaskToday = dueDate ? isToday(dueDate) : false;
+
+                let badgeLabel = 'No due date';
+                let badgeBackground = colors.surface;
+                let badgeColor = colors.textSecondary;
+
+                if (isTaskOverdue) {
+                  badgeLabel = 'Overdue';
+                  badgeBackground = colors.error + '20';
+                  badgeColor = colors.error;
+                } else if (isTaskToday) {
+                  badgeLabel = 'Today';
+                  badgeBackground = colors.primary + '20';
+                  badgeColor = colors.primary;
+                } else if (dueDate) {
+                  badgeLabel = format(dueDate, 'MMM d');
+                  badgeBackground = colors.border;
+                  badgeColor = colors.textSecondary;
+                }
+
+                return (
+                  <TouchableOpacity
+                    key={task.id}
+                    style={styles.taskItem}
+                    onPress={() => router.push('/(tabs)/tasks' as any)}
+                  >
+                    <View style={styles.taskItemLeft}>
+                      <View
+                        style={[
+                          styles.priorityDot,
+                          {
+                            backgroundColor:
+                              task.priority === 'high'
+                                ? colors.error
+                                : task.priority === 'medium'
+                                ? colors.accent
+                                : colors.success,
+                          },
+                        ]}
+                      />
+                      <Text style={[styles.taskTitle, { color: colors.text }]} numberOfLines={1}>
+                        {task.title}
+                      </Text>
+                    </View>
+                    <View style={[styles.taskStatusBadge, { backgroundColor: badgeBackground }]}>
+                      <Text style={[styles.taskStatusBadgeText, { color: badgeColor }]}>
+                        {badgeLabel}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
+            )}
+            <TouchableOpacity
+              style={styles.viewAllButton}
+              onPress={() => router.push('/(tabs)/tasks' as any)}
+            >
+              <Text style={[styles.viewAllText, { color: colors.primary }]}>View All Tasks</Text>
+            </TouchableOpacity>
+          </Card>
+        </View>
 
         {/* Habits Not Done Today */}
         {habitsNotDone.length > 0 && totalHabits > 0 && (
@@ -475,7 +509,7 @@ export default function HomeScreen() {
             </View>
             <View style={styles.progressStatItem}>
               <Text style={[styles.progressStatValue, { color: colors.secondary }]}>
-                {overdueTasks.length}
+                {overdueCount}
               </Text>
               <Text style={[styles.progressStatLabel, { color: colors.textSecondary }]}>Overdue</Text>
             </View>
@@ -723,6 +757,23 @@ const createStyles = (colors: any) =>
     },
     taskDueDate: {
       fontSize: 12,
+    },
+    taskEmptyText: {
+      fontSize: 14,
+      textAlign: 'center',
+      paddingVertical: 12,
+    },
+    taskStatusBadge: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      minWidth: 72,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    taskStatusBadgeText: {
+      fontSize: 12,
+      fontWeight: '600',
     },
     habitsCard: {
       marginBottom: 0,

@@ -9,7 +9,8 @@
     "build:android": "eas build --platform android --profile preview",
     "build:android:prod": "eas build --platform android --profile production",
     "lint": "expo lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",
@@ -59,9 +60,11 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@types/node": "^20.16.5",
     "@types/react": "~19.1.10",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~10.0.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^1.6.0"
   }
 }

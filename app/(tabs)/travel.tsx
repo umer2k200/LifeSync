@@ -423,7 +423,7 @@ export default function TravelScreen() {
         subtitle="Places & Packing" 
         onAddPress={() => activeTab === 'expenses' ? openExpenseModal() : openEditModal(undefined, activeTab === 'places')} 
       />
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <View style={styles.tabContainer}>
           <TouchableOpacity
             style={[styles.tab, activeTab === 'places' && styles.activeTab, { backgroundColor: activeTab === 'places' ? colors.primary : colors.surface }]}
@@ -944,6 +944,7 @@ const createStyles = (colors: any) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     content: { flex: 1, padding: 20 },
+    contentContainer: { paddingBottom: 32 },
     tabContainer: { flexDirection: 'row', gap: 12, marginBottom: 20 },
     tab: { flex: 1, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', flexDirection: 'row', gap: 8, justifyContent: 'center' },
     activeTab: {},

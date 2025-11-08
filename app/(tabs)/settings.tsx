@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,30 +10,38 @@ import {
   TextInput,
   KeyboardAvoidingView,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useCurrency, CURRENCIES } from '@/contexts/CurrencyContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useNotifications } from '@/contexts/NotificationContext';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { ScreenHeader } from '@/components/ScreenHeader';
-import { Moon, Sun, User, Bell, Database, Fingerprint, Lock, Eye, EyeOff, X, KeyRound, Info, DollarSign, Check } from 'lucide-react-native';
+import { Moon, Sun, User, Bell, Database, Fingerprint, Lock, Eye, EyeOff, X, KeyRound, Info, DollarSign, Check, RefreshCw } from 'lucide-react-native';
 import { SyncService } from '@/lib/sync';
 import { NotificationService } from '@/lib/notifications';
-import * as Notifications from 'expo-notifications';
+import { NotificationScheduler } from '@/lib/notificationScheduler';
 import { showSuccess, showError, showWarning, showConfirm, showInfo } from '@/lib/alert';
 import { BiometricService } from '@/lib/biometric';
 import Constants from 'expo-constants';
 import { supabase } from '@/lib/supabase';
+import { formatDistanceToNow } from 'date-fns';
 
 export default function SettingsScreen() {
   const { colors, toggleTheme, isDark } = useTheme();
   const { currency, setCurrency } = useCurrency();
   const { user, profile, signOut, signIn } = useAuth();
+  const {
+    status: notificationStatus,
+    isGranted: notificationGranted,
+    refreshPermissions,
+    requestPermissions: requestNotificationPermissions,
+  } = useNotifications();
   const router = useRouter();
   const [currencyModalVisible, setCurrencyModalVisible] = useState<boolean>(false);
-  const [notificationPermission, setNotificationPermission] = useState<boolean>(false);
   const [biometricAvailable, setBiometricAvailable] = useState<boolean>(false);
   const [biometricEnabled, setBiometricEnabled] = useState<boolean>(false);
   const [biometricType, setBiometricType] = useState<string>('Biometric');
@@ -49,11 +57,25 @@ export default function SettingsScreen() {
   const [showNewPassword, setShowNewPassword] = useState<boolean>(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [changePasswordLoading, setChangePasswordLoading] = useState<boolean>(false);
+  const [notificationLoading, setNotificationLoading] = useState<boolean>(false);
+  const [lastNotificationSchedule, setLastNotificationSchedule] = useState<Date | null>(null);
 
   useEffect(() => {
-    checkNotificationPermission();
     checkBiometricAvailability();
   }, []);
+
+  useEffect(() => {
+    const loadLastSchedule = async () => {
+      if (!user?.id) {
+        setLastNotificationSchedule(null);
+        return;
+      }
+      const timestamp = await NotificationScheduler.getLastScheduleTimestamp(user.id);
+      setLastNotificationSchedule(timestamp ? new Date(timestamp) : null);
+    };
+
+    loadLastSchedule();
+  }, [user?.id, notificationGranted]);
 
   const checkBiometricAvailability = async () => {
     const available = await BiometricService.isAvailable();
@@ -158,35 +180,78 @@ export default function SettingsScreen() {
     setShowPassword(false);
   };
 
-  const checkNotificationPermission = async () => {
-    const { status } = await Notifications.getPermissionsAsync();
-    setNotificationPermission(status === 'granted');
-  };
-
   const handleNotificationPermission = async () => {
+    if (notificationLoading) {
+      return;
+    }
     if (!user) {
       showError('Error', 'Please log in to enable push notifications');
       return;
     }
 
-    const granted = await NotificationService.requestPermissions();
-    setNotificationPermission(granted);
+    setNotificationLoading(true);
+    try {
+      const granted = await requestNotificationPermissions();
     
-    if (granted) {
-      // Register for push notifications
-      const token = await NotificationService.registerForPushNotifications(user.id);
-      if (token) {
-        // Schedule all notifications
-        const { NotificationScheduler } = await import('@/lib/notificationScheduler');
-        await NotificationScheduler.scheduleAllNotifications(user.id);
-        showSuccess('Success', 'Push notifications enabled! You will now receive notifications.');
+      if (granted) {
+        const token = await NotificationService.registerForPushNotifications(user.id);
+        if (token) {
+          await NotificationScheduler.scheduleAllNotifications(user.id);
+          await refreshPermissions();
+          const timestamp = await NotificationScheduler.getLastScheduleTimestamp(user.id);
+          setLastNotificationSchedule(timestamp ? new Date(timestamp) : new Date());
+          showSuccess('Success', 'Push notifications enabled! You will now receive notifications.');
+        } else {
+          showWarning('Warning', 'Notification permissions granted, but push token registration failed. You may need to restart the app.');
+        }
       } else {
-        showWarning('Warning', 'Notification permissions granted, but could not register push token. You may need to restart the app.');
+        await refreshPermissions();
+        showError('Permission Denied', 'Please enable notifications in your device settings to receive reminders.');
       }
-    } else {
-      showError('Permission Denied', 'Please enable notifications in your device settings to receive reminders.');
+    } catch (error) {
+      console.error('Error updating notification permissions:', error);
+      showError('Error', 'Unable to update notification permissions right now.');
+    } finally {
+      setNotificationLoading(false);
     }
   };
+
+  const handleRescheduleNotifications = async () => {
+    if (!user?.id) {
+      showError('Error', 'Please log in to reschedule notifications');
+      return;
+    }
+
+    if (!notificationGranted) {
+      showWarning('Notifications Disabled', 'Enable notifications first to reschedule reminders.');
+      return;
+    }
+
+    setNotificationLoading(true);
+    try {
+      await NotificationScheduler.rescheduleNotifications(user.id);
+      const timestamp = await NotificationScheduler.getLastScheduleTimestamp(user.id);
+      setLastNotificationSchedule(timestamp ? new Date(timestamp) : new Date());
+      showSuccess('Success', 'Notifications rescheduled successfully.');
+    } catch (error) {
+      console.error('Error rescheduling notifications:', error);
+      showError('Error', 'Could not reschedule notifications. Please try again later.');
+    } finally {
+      setNotificationLoading(false);
+    }
+  };
+
+  const notificationLabel = useMemo(() => {
+    if (notificationLoading) {
+      return 'Updating…';
+    }
+    if (notificationStatus === 'unknown') {
+      return 'Checking…';
+    }
+    return notificationGranted ? 'Enabled' : 'Disabled';
+  }, [notificationLoading, notificationGranted, notificationStatus]);
+
+  const notificationColor = notificationGranted ? colors.success : colors.error;
 
 
   const handleSync = async () => {
@@ -341,19 +406,73 @@ export default function SettingsScreen() {
         </TouchableOpacity>
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Notifications</Text>
-        <TouchableOpacity onPress={handleNotificationPermission}>
+        <TouchableOpacity onPress={handleNotificationPermission} disabled={notificationLoading}>
           <Card style={styles.settingCard}>
             <View style={styles.settingRow}>
               <View style={styles.settingLeft}>
                 <Bell size={20} color={colors.primary} />
                 <Text style={[styles.settingLabel, { color: colors.text }]}>Push Notifications</Text>
               </View>
-              <Text style={[styles.settingValue, { color: notificationPermission ? colors.success : colors.error }]}>
-                {notificationPermission ? 'Enabled' : 'Disabled'}
+              <Text style={[styles.settingValue, { color: notificationColor }]}>
+                {notificationLabel}
               </Text>
             </View>
           </Card>
         </TouchableOpacity>
+        <View style={{ marginTop: 12 }}>
+          <Text style={[styles.settingDescription, { color: colors.textSecondary, marginBottom: 8 }]}>
+            {lastNotificationSchedule
+              ? `Last scheduled ${formatDistanceToNow(lastNotificationSchedule, { addSuffix: true })}`
+              : 'Notifications have not been scheduled yet.'}
+          </Text>
+          <Card style={styles.notificationHelperCard}>
+            <View style={styles.notificationHelperHeader}>
+              <View
+                style={[
+                  styles.notificationHelperIcon,
+                  { backgroundColor: colors.primary + '20' },
+                ]}
+              >
+                {notificationLoading ? (
+                  <ActivityIndicator color={colors.primary} size="small" />
+                ) : (
+                  <RefreshCw size={20} color={colors.primary} />
+                )}
+              </View>
+              <View style={styles.notificationHelperText}>
+                <Text style={[styles.notificationHelperTitle, { color: colors.text }]}>
+                  Refresh reminder schedule
+                </Text>
+                <Text style={[styles.notificationHelperDescription, { color: colors.textSecondary }]}>
+                  Changed your routine or missed alerts? Tap once and we&apos;ll rebuild every reminder for you.
+                </Text>
+              </View>
+            </View>
+            <View style={styles.notificationHelperFooter}>
+              <TouchableOpacity
+                style={[
+                  styles.notificationHelperButton,
+                  { backgroundColor: colors.primary },
+                ]}
+                onPress={handleRescheduleNotifications}
+                disabled={notificationLoading}
+                activeOpacity={0.85}
+              >
+                {notificationLoading ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" style={{ marginRight: 8 }} />
+                ) : (
+                  <RefreshCw size={16} color="#FFFFFF" style={{ marginRight: 8 }} />
+                )}
+                <Text style={styles.notificationHelperButtonText}>
+                  {notificationLoading ? 'Refreshing…' : 'Refresh reminders'}
+                </Text>
+              </TouchableOpacity>
+              <Text style={[styles.notificationHelperHint, { color: colors.textSecondary }]}>
+                You can come back here anytime if notifications stop showing up.
+              </Text>
+            </View>
+          </Card>
+        </View>
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Security</Text>
         {biometricAvailable && (
@@ -780,6 +899,66 @@ const createStyles = (colors: any) =>
     },
     settingValue: {
       fontSize: 14,
+    },
+    notificationHelperCard: {
+      flexDirection: 'column',
+      padding: 20,
+      borderRadius: 16,
+      gap: 12,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      shadowColor: '#000000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.05,
+      shadowRadius: 12,
+      elevation: 3,
+    },
+    notificationHelperHeader: {
+      flex: 1,
+      flexDirection: 'row',
+      gap: 16,
+      alignItems: 'flex-start',
+    },
+    notificationHelperIcon: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    notificationHelperText: {
+      flex: 1,
+      gap: 4,
+    },
+    notificationHelperTitle: {
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    notificationHelperDescription: {
+      fontSize: 12,
+      lineHeight: 18,
+    },
+    notificationHelperFooter: {
+      marginTop: 18,
+      flex: 1,
+    },
+    notificationHelperButton: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 12,
+      borderRadius: 999,
+      marginBottom: 10,
+    },
+    notificationHelperButtonText: {
+      fontSize: 14,
+      fontWeight: '600',
+      color: '#FFFFFF',
+    },
+    notificationHelperHint: {
+      fontSize: 11,
+      textAlign: 'center',
     },
     buttonContainer: {
       marginTop: 24,

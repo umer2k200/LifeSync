@@ -4,6 +4,9 @@
     "strict": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
+    "types": [
+      "vitest/globals"
+    ],
     "paths": {
       "@/*": ["./*"]
     }

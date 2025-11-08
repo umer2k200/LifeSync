@@ -230,7 +230,7 @@ export default function ShoppingListScreen() {
   return (
     <View style={styles.container}>
       <ScreenHeader title="Things to Buy" subtitle="List of items to buy" onAddPress={() => setModalVisible(true)} />
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
         <View style={styles.statsContainer}>
           <Card style={styles.statCard}>
             <Text style={[styles.statValue, { color: colors.text }]}>{totalItems}</Text>
@@ -486,6 +486,7 @@ const createStyles = (colors: any) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: colors.background },
     content: { flex: 1, padding: 20 },
+    contentContainer: { paddingBottom: 32 },
     statsContainer: { flexDirection: 'row', gap: 12, marginBottom: 20 },
     statCard: { flex: 1, padding: 16, alignItems: 'center' },
     statValue: { fontSize: 24, fontWeight: 'bold', marginBottom: 4 },
