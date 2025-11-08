@@ -1,6 +1,5 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Appearance } from 'react-native';
 import { supabase } from '@/lib/supabase';
 
 export type Theme = 'light' | 'dark';
@@ -49,37 +48,18 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
-let persistedThemeCache: Theme | null = null;
-
-const getInitialTheme = (): Theme => {
-  if (persistedThemeCache) {
-    return persistedThemeCache;
-  }
-
-  const systemTheme = Appearance.getColorScheme();
-  return systemTheme === 'light' ? 'light' : 'dark';
-};
-
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [theme, setTheme] = useState<Theme>('dark'); // Default to dark mode
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let isMounted = true;
-
-    const isStillMounted = () => isMounted;
-
-    loadTheme(isStillMounted);
+    loadTheme();
     
     // Listen for auth changes to load theme from database
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!isMounted) {
-        return;
-      }
-
       if (event === 'SIGNED_IN' && session?.user) {
         // Load theme from database when user logs in
-        await loadThemeFromDatabase(session.user.id, isStillMounted);
+        await loadThemeFromDatabase(session.user.id);
       } else if (event === 'SIGNED_OUT') {
         // Reset to dark theme when logged out (default)
         setTheme('dark');
@@ -87,26 +67,25 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       }
     });
 
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadTheme = async (isMounted?: () => boolean) => {
+  const loadTheme = async () => {
     try {
-      // Fallback to AsyncStorage first for immediate theme application
-      const savedTheme = await AsyncStorage.getItem('@lifesync_theme');
-      if (!isMounted || isMounted()) {
+      // First try to load from database if user is logged in
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        await loadThemeFromDatabase(session.user.id);
+      } else {
+        // Fallback to AsyncStorage if not logged in, default to dark if not set
+        const savedTheme = await AsyncStorage.getItem('@lifesync_theme');
         if (savedTheme === 'dark' || savedTheme === 'light') {
           setTheme(savedTheme);
-          persistedThemeCache = savedTheme;
         } else {
           // First time app load - default to dark mode
           setTheme('dark');
           await AsyncStorage.setItem('@lifesync_theme', 'dark');
-          persistedThemeCache = 'dark';
         }
       }
     } catch (error) {
@@ -114,31 +93,18 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       // Fallback to AsyncStorage on error
       try {
         const savedTheme = await AsyncStorage.getItem('@lifesync_theme');
-        if ((!isMounted || isMounted()) && (savedTheme === 'dark' || savedTheme === 'light')) {
+        if (savedTheme === 'dark' || savedTheme === 'light') {
           setTheme(savedTheme);
-          persistedThemeCache = savedTheme;
         }
       } catch (storageError) {
         console.error('Error loading theme from storage:', storageError);
       }
     } finally {
-      if (!isMounted || isMounted()) {
-        setLoading(false);
-      }
-    }
-
-    // Load theme from database in the background if user is logged in
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        await loadThemeFromDatabase(session.user.id, isMounted);
-      }
-    } catch (error) {
-      console.error('Error loading theme session info:', error);
+      setLoading(false);
     }
   };
 
-  const loadThemeFromDatabase = async (userId: string, isMounted?: () => boolean) => {
+  const loadThemeFromDatabase = async (userId: string) => {
     try {
       const { data, error } = await supabase
         .from('profiles')
@@ -150,7 +116,7 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         console.error('Error loading theme from database:', error);
         // Fallback to AsyncStorage
         const savedTheme = await AsyncStorage.getItem('@lifesync_theme');
-        if ((!isMounted || isMounted()) && (savedTheme === 'dark' || savedTheme === 'light')) {
+        if (savedTheme === 'dark' || savedTheme === 'light') {
           setTheme(savedTheme);
         }
         return;
@@ -159,16 +125,14 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       // Type assertion for Supabase query result
       const themeData = data as { theme?: string } | null;
       
-      if ((!isMounted || isMounted()) && (themeData?.theme === 'dark' || themeData?.theme === 'light')) {
+      if (themeData?.theme === 'dark' || themeData?.theme === 'light') {
         setTheme(themeData.theme);
-        persistedThemeCache = themeData.theme;
         // Also save to AsyncStorage for offline access
         await AsyncStorage.setItem('@lifesync_theme', themeData.theme);
-      } else if (!isMounted || isMounted()) {
+      } else {
         // No theme in database - default to dark for new users
         setTheme('dark');
         await AsyncStorage.setItem('@lifesync_theme', 'dark');
-        persistedThemeCache = 'dark';
         // Save to database
         await supabase
           .from('profiles')
@@ -181,9 +145,8 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
       // Fallback to AsyncStorage
       try {
         const savedTheme = await AsyncStorage.getItem('@lifesync_theme');
-        if ((!isMounted || isMounted()) && (savedTheme === 'dark' || savedTheme === 'light')) {
+        if (savedTheme === 'dark' || savedTheme === 'light') {
           setTheme(savedTheme);
-          persistedThemeCache = savedTheme;
         }
       } catch (storageError) {
         console.error('Error loading theme from storage:', storageError);
@@ -194,7 +157,6 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   const toggleTheme = async () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
     setTheme(newTheme);
-    persistedThemeCache = newTheme;
     
     try {
       // Save to AsyncStorage for immediate access
@@ -219,24 +181,6 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const colors = theme === 'light' ? lightColors : darkColors;
-
-  useEffect(() => {
-    const appearanceSubscription = Appearance.addChangeListener(({ colorScheme }) => {
-      // Honor system preference only if the user hasn't chosen explicitly yet
-      if (!persistedThemeCache) {
-        const systemTheme = colorScheme === 'light' ? 'light' : 'dark';
-        setTheme(systemTheme);
-      }
-    });
-
-    return () => {
-      appearanceSubscription.remove();
-    };
-  }, []);
-
-  if (loading) {
-    return null;
-  }
 
   return (
     <ThemeContext.Provider

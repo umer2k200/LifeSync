@@ -3,12 +3,10 @@
  * Manages all scheduled notifications for the app
  */
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NotificationService } from './notifications';
 import { SyncService } from './sync';
 import * as Notifications from 'expo-notifications';
 import { parseISO, addDays, isPast } from 'date-fns';
-import { Logger } from './logger';
 
 interface Habit {
   id: string;
@@ -28,73 +26,6 @@ interface Task {
 export class NotificationScheduler {
   // Track ongoing scheduling operations to prevent duplicates
   private static schedulingInProgress = new Set<string>();
-  private static readonly SCHEDULE_VERSION = 1;
-  private static readonly SCHEDULE_TTL_MS = 1000 * 60 * 60; // 1 hour
-  private static readonly SCHEDULE_KEY_PREFIX = '@lifesync_notifications_schedule_';
-
-  private static getScheduleKey(userId: string): string {
-    return `${this.SCHEDULE_KEY_PREFIX}${userId}`;
-  }
-
-  private static async getScheduleRecord(userId: string): Promise<{ version: number; scheduledAt: number } | null> {
-    try {
-      const raw = await AsyncStorage.getItem(this.getScheduleKey(userId));
-      if (!raw) {
-        return null;
-      }
-      const parsed = JSON.parse(raw) as { version: number; scheduledAt: number };
-      if (typeof parsed.version !== 'number' || typeof parsed.scheduledAt !== 'number') {
-        return null;
-      }
-      return parsed;
-    } catch (error) {
-      console.error('Error reading notification schedule record:', error);
-      return null;
-    }
-  }
-
-  private static async setScheduleRecord(userId: string, record: { version: number; scheduledAt: number }): Promise<void> {
-    try {
-      await AsyncStorage.setItem(this.getScheduleKey(userId), JSON.stringify(record));
-    } catch (error) {
-      console.error('Error persisting notification schedule record:', error);
-    }
-  }
-
-  private static async clearScheduleRecord(userId: string): Promise<void> {
-    try {
-      await AsyncStorage.removeItem(this.getScheduleKey(userId));
-    } catch (error) {
-      console.error('Error clearing notification schedule record:', error);
-    }
-  }
-
-  private static async shouldReschedule(userId: string): Promise<boolean> {
-    const record = await this.getScheduleRecord(userId);
-    if (!record) {
-      return true;
-    }
-
-    if (record.version !== this.SCHEDULE_VERSION) {
-      return true;
-    }
-
-    const scheduleAge = Date.now() - record.scheduledAt;
-    if (scheduleAge > this.SCHEDULE_TTL_MS) {
-      return true;
-    }
-
-    return false;
-  }
-
-  static async getLastScheduleTimestamp(userId: string): Promise<number | null> {
-    const record = await this.getScheduleRecord(userId);
-    return record ? record.scheduledAt : null;
-  }
-
-  static async getScheduleMetadata(userId: string): Promise<{ version: number; scheduledAt: number } | null> {
-    return this.getScheduleRecord(userId);
-  }
 
   /**
    * Schedule all notifications for a user
@@ -103,26 +34,20 @@ export class NotificationScheduler {
   static async scheduleAllNotifications(userId: string): Promise<void> {
     // Prevent duplicate scheduling for the same user
     if (this.schedulingInProgress.has(userId)) {
-      Logger.debug('Notification scheduling already in progress, skipping', { userId });
+      console.log('Notification scheduling already in progress for user, skipping...');
       return;
     }
 
     this.schedulingInProgress.add(userId);
 
     try {
-      const needsReschedule = await this.shouldReschedule(userId);
-      if (!needsReschedule) {
-        Logger.debug('Notification schedule is still fresh, skipping reschedule', { userId });
-        return;
-      }
-
       // First, cancel all existing notifications to avoid duplicates
       await NotificationService.cancelAllNotifications();
       
       // Check if notifications are enabled
       const hasPermission = await NotificationService.areNotificationsEnabled();
       if (!hasPermission) {
-        Logger.info('Notifications not enabled, skipping scheduling', { userId });
+        console.log('Notifications not enabled, skipping scheduling');
         return;
       }
 
@@ -134,14 +59,9 @@ export class NotificationScheduler {
         this.scheduleCharityReminders(userId),
       ]);
 
-      Logger.info('Notifications scheduled successfully', { userId });
-      await this.setScheduleRecord(userId, {
-        version: this.SCHEDULE_VERSION,
-        scheduledAt: Date.now(),
-      });
+      console.log('All notifications scheduled successfully');
     } catch (error) {
-      Logger.error('Error scheduling notifications', { userId }, error);
-      await this.clearScheduleRecord(userId);
+      console.error('Error scheduling notifications:', error);
     } finally {
       // Remove from in-progress set after a short delay to allow async operations to complete
       setTimeout(() => {
@@ -182,12 +102,9 @@ export class NotificationScheduler {
         );
       }
 
-      Logger.debug('Habit reminders scheduled', {
-        userId,
-        count: habitsWithReminders.length,
-      });
+      console.log(`Scheduled ${habitsWithReminders.length} habit reminders`);
     } catch (error) {
-      Logger.error('Error scheduling habit reminders', { userId }, error);
+      console.error('Error scheduling habit reminders:', error);
     }
   }
 
@@ -248,12 +165,9 @@ export class NotificationScheduler {
         }
       }
 
-      Logger.debug('Task reminders scheduled', {
-        userId,
-        count: tasksWithDueDates.length,
-      });
+      console.log(`Scheduled reminders for ${tasksWithDueDates.length} tasks`);
     } catch (error) {
-      Logger.error('Error scheduling task reminders', { userId }, error);
+      console.error('Error scheduling task reminders:', error);
     }
   }
 
@@ -274,7 +188,7 @@ export class NotificationScheduler {
 
       // If no settings found or reminders disabled, skip scheduling
       if (!settings || settings.length === 0 || !settings[0].enabled) {
-        Logger.debug('Water reminders disabled or no settings found', { userId });
+        console.log('Water reminders disabled or no settings found');
         return;
       }
 
@@ -310,12 +224,9 @@ export class NotificationScheduler {
         );
       }
 
-      Logger.debug('Water reminders scheduled', {
-        userId,
-        count: reminderTimes.length,
-      });
+      console.log(`Scheduled ${reminderTimes.length} water intake reminders`);
     } catch (error) {
-      Logger.error('Error scheduling water reminders', { userId }, error);
+      console.error('Error scheduling water reminders:', error);
     }
   }
 
@@ -329,12 +240,9 @@ export class NotificationScheduler {
       
       // Charity reminders are already scheduled via the Islamic screen
       // This function is here for consistency
-      Logger.debug('Charity reminders already handled elsewhere', {
-        userId,
-        count: charityReminders.length,
-      });
+      console.log(`Found ${charityReminders.length} charity reminders (already scheduled)`);
     } catch (error) {
-      Logger.error('Error checking charity reminders', { userId }, error);
+      console.error('Error checking charity reminders:', error);
     }
   }
 
@@ -342,7 +250,6 @@ export class NotificationScheduler {
    * Reschedule notifications (useful when data changes)
    */
   static async rescheduleNotifications(userId: string): Promise<void> {
-    await this.clearScheduleRecord(userId);
     await this.scheduleAllNotifications(userId);
   }
 }

@@ -23,177 +23,103 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const profileCache = new Map<string, Profile>();
-const profileRequestCache = new Map<string, Promise<Profile>>();
-
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchProfile = async (userId: string): Promise<Profile> => {
-    const cachedProfile = profileCache.get(userId);
-    if (cachedProfile) {
-      return cachedProfile;
-    }
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('email, full_name, theme')
+        .eq('id', userId)
+        .single();
 
-    const inFlight = profileRequestCache.get(userId);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const request = (async (): Promise<Profile> => {
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('email, full_name, theme')
-          .eq('id', userId)
-          .single();
-
-        if (error || !data) {
-          if (error) {
-            console.error('Error fetching profile:', error);
-          }
-
-          const fallbackProfile: Profile = {
-            email: undefined,
-            full_name: undefined,
-            theme: undefined,
-          };
-          profileCache.set(userId, fallbackProfile);
-          return fallbackProfile;
+      if (error || !data) {
+        if (error) {
+          console.error('Error fetching profile:', error);
         }
-
-        const profileData = data as { email?: string; full_name?: string; theme?: string } | null;
-
-        if (!profileData) {
-          const fallbackProfile: Profile = {
-            email: undefined,
-            full_name: undefined,
-            theme: undefined,
-          };
-          profileCache.set(userId, fallbackProfile);
-          return fallbackProfile;
-        }
-
-        const hydratedProfile: Profile = {
-          email: profileData.email || undefined,
-          full_name: profileData.full_name || undefined,
-          theme: (profileData.theme as Theme | null) || 'light',
-        };
-
-        profileCache.set(userId, hydratedProfile);
-        return hydratedProfile;
-      } catch (error) {
-        console.error('Error fetching profile:', error);
-        const fallbackProfile: Profile = {
+        // Fallback to user_metadata
+        return {
           email: undefined,
           full_name: undefined,
           theme: undefined,
         };
-        profileCache.set(userId, fallbackProfile);
-        return fallbackProfile;
-      } finally {
-        profileRequestCache.delete(userId);
       }
-    })();
 
-    profileRequestCache.set(userId, request);
-    return request;
-  };
+      // Type assertion for Supabase query result
+      const profileData = data as { email?: string; full_name?: string; theme?: string } | null;
+      
+      if (!profileData) {
+        return {
+          email: undefined,
+          full_name: undefined,
+          theme: undefined,
+        };
+      }
 
-  const clearProfileCache = (userId?: string) => {
-    if (userId) {
-      profileCache.delete(userId);
-      profileRequestCache.delete(userId);
-    } else {
-      profileCache.clear();
-      profileRequestCache.clear();
+      return {
+        email: profileData.email || undefined,
+        full_name: profileData.full_name || undefined,
+        theme: (profileData.theme as Theme | null) || 'light',
+      };
+    } catch (error) {
+      console.error('Error fetching profile:', error);
+      return {
+        email: undefined,
+        full_name: undefined,
+        theme: undefined,
+      };
     }
   };
 
   // Simple initialization - get current session
   useEffect(() => {
-    let isMounted = true;
-
-    const initialize = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-
-        if (!isMounted) return;
-
-        if (session?.user) {
-          const expiresAt = session.expires_at;
-          const now = Math.floor(Date.now() / 1000);
-
-          if (expiresAt && expiresAt <= now) {
-            setUser(null);
-            setProfile(null);
-            clearProfileCache(session.user.id);
-            await supabase.auth.signOut();
-            setLoading(false);
-            return;
-          }
-
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      // Only set user if session is valid
+      if (session?.user) {
+        // Verify session is not expired
+        const expiresAt = session.expires_at;
+        const now = Math.floor(Date.now() / 1000);
+        if (expiresAt && expiresAt > now) {
           setUser(session.user);
-          setLoading(false);
-          fetchProfile(session.user.id)
-            .then((profileData) => {
-              if (isMounted) {
-                setProfile(profileData);
-              }
-            })
-            .catch((error) => {
-              console.error('Error fetching profile on init:', error);
-            });
+          const profileData = await fetchProfile(session.user.id);
+          setProfile(profileData);
+        } else if (!expiresAt) {
+          // No expiration time, assume valid
+          setUser(session.user);
+          const profileData = await fetchProfile(session.user.id);
+          setProfile(profileData);
         } else {
+          // Session expired, clear it
           setUser(null);
           setProfile(null);
-          clearProfileCache();
-          setLoading(false);
+          supabase.auth.signOut();
         }
-      } catch (error) {
-        console.error('Error initializing auth session:', error);
-        if (isMounted) {
-          setLoading(false);
-        }
+      } else {
+        setUser(null);
+        setProfile(null);
       }
-    };
+      setLoading(false);
+    });
 
-    initialize();
-
+    // Listen for auth changes - handle all auth events
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!isMounted) {
-        return;
-      }
-
       if (event === 'SIGNED_OUT' || !session) {
-        clearProfileCache();
         setUser(null);
         setProfile(null);
         setLoading(false);
-        return;
-      }
-
-      if (session.user) {
+      } else if (session?.user) {
+        // Update on any auth event that provides a session (SIGNED_IN, TOKEN_REFRESHED, etc.)
         setUser(session.user);
+        const profileData = await fetchProfile(session.user.id);
+        setProfile(profileData);
         setLoading(false);
-        fetchProfile(session.user.id)
-          .then((profileData) => {
-            if (isMounted) {
-              setProfile(profileData);
-            }
-          })
-          .catch((error) => {
-            console.error('Error fetching profile on auth change:', error);
-          });
       }
     });
 
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
   const signIn = async (email: string, password: string) => {
@@ -221,12 +147,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // This ensures navigation happens even if onAuthStateChange is delayed
     if (data?.user && data?.session) {
       setUser(data.user);
+      const profileData = await fetchProfile(data.user.id);
+      setProfile(profileData);
       setLoading(false);
-      fetchProfile(data.user.id)
-        .then((profileData) => setProfile(profileData))
-        .catch((profileError) => {
-          console.error('Error fetching profile after sign in:', profileError);
-        });
     }
     // onAuthStateChange will also fire as a backup to ensure consistency
 
@@ -282,11 +205,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Set user state immediately if session exists
       if (data.session?.user) {
         setUser(data.user);
-        fetchProfile(data.user.id)
-          .then((profileData) => setProfile(profileData))
-          .catch((profileError) => {
-            console.error('Error fetching profile after sign up:', profileError);
-          });
+        const profileData = await fetchProfile(data.user.id);
+        setProfile(profileData);
       }
     }
 
@@ -303,7 +223,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         console.error('Error unregistering push notifications on sign out:', error);
         // Continue with sign out even if unregistering fails
       }
-      clearProfileCache(user.id);
     }
     
     await supabase.auth.signOut();
