@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "com.lifesync.app",
-      "versionCode": 2.1,
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/icon-foreground.png",
         "backgroundColor": "#6A5ACD"
