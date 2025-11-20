@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput, Modal } from 'react-native';
+import DraggableFlatList from 'react-native-draggable-flatlist';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -9,7 +10,7 @@ import { Button } from '@/components/Button';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
 import { SyncService } from '@/lib/sync';
 import { NotificationScheduler } from '@/lib/notificationScheduler';
-import { CheckCircle2, Circle, X, Search, Filter, Calendar, ListTodo, Edit2, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { CheckCircle2, Circle, X, Search, Filter, Calendar, ListTodo, Edit2, ChevronDown, ChevronUp, GripVertical } from 'lucide-react-native';
 import { format, isPast, isToday, parseISO } from 'date-fns';
 import { showError, showConfirmDestructive, showSuccess } from '@/lib/alert';
 
@@ -22,6 +23,8 @@ interface Task {
   category_id: string | null;
   is_completed: boolean;
   completed_at: string | null;
+  sort_order?: number | null;
+  created_at?: string;
 }
 
 interface TaskCategory {
@@ -31,7 +34,7 @@ interface TaskCategory {
   icon: string;
 }
 
-type SortOption = 'priority' | 'due_date' | 'title' | 'created';
+type SortOption = 'manual' | 'priority' | 'due_date' | 'title';
 type FilterOption = 'all' | 'active' | 'completed' | 'overdue';
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -75,13 +78,25 @@ export default function TasksScreen() {
   const [customCategoryName, setCustomCategoryName] = useState('');
   const [showCustomCategoryInput, setShowCustomCategoryInput] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortOption, setSortOption] = useState<SortOption>('priority');
+  const [sortOption, setSortOption] = useState<SortOption>('manual');
   const [filterOption, setFilterOption] = useState<FilterOption>('all');
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [showActive, setShowActive] = useState(true);
   const [showCompleted, setShowCompleted] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [taskReorderSection, setTaskReorderSection] = useState<'active' | 'completed' | null>(null);
+
+  const sortTasksByManualOrder = useCallback((list: Task[]) => {
+    return [...list].sort((a, b) => {
+      const orderA = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+      const orderB = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      const createdA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const createdB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return createdA - createdB;
+    });
+  }, []);
 
   useEffect(() => {
     if (user) {
@@ -148,8 +163,12 @@ export default function TasksScreen() {
 
   const loadTasks = async () => {
     if (!user) return;
-    const data = await SyncService.fetchWithFallback<Task>('tasks', user.id);
-    setTasks(data);
+    const data = await SyncService.fetchWithFallback<Task>('tasks', user.id, (q: any) =>
+      q.order('sort_order', { ascending: true, nullsLast: true }).order('created_at', {
+        ascending: true,
+      })
+    );
+    setTasks(sortTasksByManualOrder(data));
   };
 
   const openEditModal = (task: Task) => {
@@ -191,9 +210,12 @@ export default function TasksScreen() {
       await SyncService.updateWithFallback('tasks', user.id, editTaskId, taskData);
     } else {
       // Create new task
+      const nextOrder =
+        tasks.reduce((max, t) => Math.max(max, t.sort_order ?? -1), -1) + 1;
       await SyncService.insertWithFallback('tasks', user.id, {
         ...taskData,
         is_completed: false,
+        sort_order: nextOrder,
       });
     }
 
@@ -229,9 +251,39 @@ export default function TasksScreen() {
     });
   };
 
+  const handleTaskReorder = async (section: 'active' | 'completed', reorderedSection: Task[]) => {
+    if (!user) return;
+    const activeManual = tasks.filter((t) => !t.is_completed);
+    const completedManual = tasks.filter((t) => t.is_completed);
+    const newActive = section === 'active' ? reorderedSection : activeManual;
+    const newCompleted = section === 'completed' ? reorderedSection : completedManual;
+    const combined = [...newActive, ...newCompleted];
+    const updated = combined.map((task, index) => ({ ...task, sort_order: index }));
+    setTasks(updated);
+    try {
+      await Promise.all(
+        updated.map((task, index) =>
+          SyncService.updateWithFallback('tasks', user.id, task.id, { sort_order: index })
+        )
+      );
+    } catch (error) {
+      console.error('Error reordering tasks:', error);
+      showError('Error', 'Failed to reorder tasks. Please try again.');
+      loadTasks();
+    }
+  };
+
+  const toggleTaskReorder = (section: 'active' | 'completed') => {
+    if (!manualOrderingEnabled) {
+      showError('Error','Manual ordering is available only when filters are cleared and sort is set to Manual.');
+      return;
+    }
+    setTaskReorderSection((current) => (current === section ? null : section));
+  };
+
   // Filter and sort tasks
   const getFilteredAndSortedTasks = () => {
-    let filtered = tasks;
+    let filtered = [...tasks];
 
     // Apply search filter
     if (searchQuery.trim()) {
@@ -266,22 +318,29 @@ export default function TasksScreen() {
     }
 
     // Apply sorting
-    filtered.sort((a, b) => {
-      switch (sortOption) {
-        case 'priority':
-          const priorityOrder = { high: 3, medium: 2, low: 1 };
-          return (priorityOrder[b.priority as keyof typeof priorityOrder] || 0) -
-            (priorityOrder[a.priority as keyof typeof priorityOrder] || 0);
-        case 'due_date':
-          if (!a.due_date) return 1;
-          if (!b.due_date) return -1;
-          return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
-        case 'title':
-          return a.title.localeCompare(b.title);
-        default:
-          return 0;
-      }
-    });
+    if (sortOption === 'manual') {
+      filtered = sortTasksByManualOrder(filtered);
+    } else {
+      filtered.sort((a, b) => {
+        switch (sortOption) {
+          case 'priority': {
+            const priorityOrder = { high: 3, medium: 2, low: 1 };
+            return (
+              (priorityOrder[b.priority as keyof typeof priorityOrder] || 0) -
+              (priorityOrder[a.priority as keyof typeof priorityOrder] || 0)
+            );
+          }
+          case 'due_date':
+            if (!a.due_date) return 1;
+            if (!b.due_date) return -1;
+            return new Date(a.due_date).getTime() - new Date(b.due_date).getTime();
+          case 'title':
+            return a.title.localeCompare(b.title);
+          default:
+            return 0;
+        }
+      });
+    }
 
     return filtered;
   };
@@ -289,6 +348,17 @@ export default function TasksScreen() {
   const filteredTasks = getFilteredAndSortedTasks();
   const activeTasks = filteredTasks.filter((t) => !t.is_completed);
   const completedTasks = filteredTasks.filter((t) => t.is_completed);
+  const manualOrderingEnabled =
+    sortOption === 'manual' &&
+    !searchQuery.trim() &&
+    filterOption === 'all' &&
+    !categoryFilter;
+
+  useEffect(() => {
+    if (!manualOrderingEnabled) {
+      setTaskReorderSection(null);
+    }
+  }, [manualOrderingEnabled]);
 
   // Statistics
   const totalTasks = tasks.length;
@@ -310,6 +380,20 @@ export default function TasksScreen() {
     if (!categoryId) return colors.textSecondary;
     const category = categories.find((c) => c.id === categoryId);
     return category ? category.color : colors.textSecondary;
+  };
+
+  const toggleActiveSection = () => {
+    if (taskReorderSection === 'active') {
+      setTaskReorderSection(null);
+    }
+    setShowActive((prev) => !prev);
+  };
+
+  const toggleCompletedSection = () => {
+    if (taskReorderSection === 'completed') {
+      setTaskReorderSection(null);
+    }
+    setShowCompleted((prev) => !prev);
   };
 
   const renderTaskCard = (task: Task) => {
@@ -414,6 +498,46 @@ export default function TasksScreen() {
           </View>
         </View>
       </Card>
+    );
+  };
+
+  const renderTaskReorderList = (section: 'active' | 'completed', data: Task[]) => {
+    if (data.length === 0) return null;
+    return (
+      <View style={styles.taskReorderContainer}>
+        <Text style={[styles.reorderHint, { color: colors.textSecondary }]}>
+          Long press and drag to change the order.
+        </Text>
+        <DraggableFlatList
+          data={data}
+          keyExtractor={(item) => item.id}
+          scrollEnabled={false}
+          onDragEnd={({ data }) => handleTaskReorder(section, data)}
+          renderItem={({ item, drag, isActive }) => (
+            <TouchableOpacity
+              style={[
+                styles.taskReorderItem,
+                { backgroundColor: colors.surface, borderColor: colors.border },
+                isActive && { backgroundColor: colors.primary + '15', borderColor: colors.primary },
+              ]}
+              onLongPress={drag}
+              activeOpacity={0.9}
+            >
+              <GripVertical size={16} color={colors.textSecondary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.taskReorderTitle, { color: colors.text }]} numberOfLines={1}>
+                  {item.title}
+                </Text>
+                {item.due_date && (
+                  <Text style={[styles.taskReorderMeta, { color: colors.textSecondary }]}>
+                    Due {format(parseISO(item.due_date), 'MMM dd')}
+                  </Text>
+                )}
+              </View>
+            </TouchableOpacity>
+          )}
+        />
+      </View>
     );
   };
 
@@ -557,7 +681,7 @@ export default function TasksScreen() {
             <View style={styles.filterRow}>
               <Text style={[styles.filterLabel, { color: colors.text }]}>Sort:</Text>
               <View style={styles.filterOptions}>
-                {(['priority', 'due_date', 'title'] as SortOption[]).map((option) => (
+                {(['manual', 'priority', 'due_date', 'title'] as SortOption[]).map((option) => (
                   <TouchableOpacity
                     key={option}
                     style={[
@@ -572,7 +696,13 @@ export default function TasksScreen() {
                         { color: sortOption === option ? '#fff' : colors.text },
                       ]}
                     >
-                      {option === 'due_date' ? 'Due Date' : option === 'priority' ? 'Priority' : 'Title'}
+                      {option === 'due_date'
+                        ? 'Due Date'
+                        : option === 'priority'
+                        ? 'Priority'
+                        : option === 'manual'
+                        ? 'Manual'
+                        : 'Title'}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -595,37 +725,116 @@ export default function TasksScreen() {
           <>
             {activeTasks.length > 0 && (
               <>
-                <TouchableOpacity
-                  style={styles.sectionHeader}
-                  onPress={() => setShowActive(!showActive)}
-                >
-                  <Text style={[styles.sectionTitle, { color: colors.text }]}>Active ({activeTasks.length})</Text>
-                  {showActive ? (
-                    <ChevronUp size={20} color={colors.textSecondary} />
-                  ) : (
-                    <ChevronDown size={20} color={colors.textSecondary} />
-                  )}
-                </TouchableOpacity>
-                {showActive && activeTasks.map(renderTaskCard)}
+                <View style={styles.sectionHeaderRow}>
+                  <TouchableOpacity style={styles.sectionHeader} onPress={toggleActiveSection}>
+                    <Text style={[styles.sectionTitle, { color: colors.text }]}>
+                      Active ({activeTasks.length})
+                    </Text>
+                    {showActive ? (
+                      <ChevronUp size={20} color={colors.textSecondary} />
+                    ) : (
+                      <ChevronDown size={20} color={colors.textSecondary} />
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.reorderToggle,
+                      taskReorderSection === 'active' && { borderColor: colors.primary, backgroundColor: colors.primary + '15' },
+                      !manualOrderingEnabled && styles.reorderToggleDisabled,
+                    ]}
+                    onPress={() => toggleTaskReorder('active')}
+                    disabled={!manualOrderingEnabled}
+                  >
+                    <GripVertical
+                      size={14}
+                      color={
+                        taskReorderSection === 'active'
+                          ? colors.primary
+                          : manualOrderingEnabled
+                          ? colors.primary
+                          : colors.textSecondary
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.reorderToggleText,
+                        {
+                          color:
+                            taskReorderSection === 'active'
+                              ? colors.primary
+                              : manualOrderingEnabled
+                              ? colors.primary
+                              : colors.textSecondary,
+                        },
+                      ]}
+                    >
+                      {taskReorderSection === 'active' ? 'Done' : 'Reorder'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {showActive &&
+                  (taskReorderSection === 'active'
+                    ? renderTaskReorderList('active', activeTasks)
+                    : activeTasks.map(renderTaskCard))}
               </>
             )}
 
             {completedTasks.length > 0 && (
               <>
-                <TouchableOpacity
-                  style={styles.sectionHeader}
-                  onPress={() => setShowCompleted(!showCompleted)}
-                >
-                  <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 16 }]}>
-                    Completed ({completedTasks.length})
-                  </Text>
-                  {showCompleted ? (
-                    <ChevronUp size={20} color={colors.textSecondary} />
-                  ) : (
-                    <ChevronDown size={20} color={colors.textSecondary} />
-                  )}
-                </TouchableOpacity>
-                {showCompleted && completedTasks.map(renderTaskCard)}
+                <View style={styles.sectionHeaderRow}>
+                  <TouchableOpacity style={styles.sectionHeader} onPress={toggleCompletedSection}>
+                    <Text style={[styles.sectionTitle, { color: colors.text, marginTop: 16 }]}>
+                      Completed ({completedTasks.length})
+                    </Text>
+                    {showCompleted ? (
+                      <ChevronUp size={20} color={colors.textSecondary} />
+                    ) : (
+                      <ChevronDown size={20} color={colors.textSecondary} />
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.reorderToggle,
+                      taskReorderSection === 'completed' && {
+                        borderColor: colors.primary,
+                        backgroundColor: colors.primary + '15',
+                      },
+                      !manualOrderingEnabled && styles.reorderToggleDisabled,
+                    ]}
+                    onPress={() => toggleTaskReorder('completed')}
+                    disabled={!manualOrderingEnabled}
+                  >
+                    <GripVertical
+                      size={14}
+                      color={
+                        taskReorderSection === 'completed'
+                          ? colors.primary
+                          : manualOrderingEnabled
+                          ? colors.primary
+                          : colors.textSecondary
+                      }
+                    />
+                    <Text
+                      style={[
+                        styles.reorderToggleText,
+                        {
+                          color:
+                            taskReorderSection === 'completed'
+                              ? colors.primary
+                              : manualOrderingEnabled
+                              ? colors.primary
+                              : colors.textSecondary,
+                        },
+                      ]}
+                    >
+                      {taskReorderSection === 'completed' ? 'Done' : 'Reorder'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {showCompleted &&
+                  (taskReorderSection === 'completed'
+                    ? renderTaskReorderList('completed', completedTasks)
+                    : completedTasks.map(renderTaskCard))}
               </>
             )}
           </>
@@ -931,6 +1140,29 @@ const createStyles = (colors: any) =>
       marginBottom: 12,
       marginTop: 8,
     },
+    sectionHeaderRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      marginBottom: 12,
+    },
+    reorderToggle: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 999,
+      borderWidth: 1,
+    },
+    reorderToggleDisabled: {
+      opacity: 0.5,
+    },
+    reorderToggleText: {
+      fontSize: 12,
+      fontWeight: '600',
+    },
     taskCard: {
       marginBottom: 12,
     },
@@ -1006,6 +1238,30 @@ const createStyles = (colors: any) =>
     categoryBadgeText: {
       fontSize: 11,
       fontWeight: '600',
+    },
+    taskReorderContainer: {
+      marginBottom: 12,
+    },
+    taskReorderItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      marginBottom: 12,
+    },
+    taskReorderTitle: {
+      flex: 1,
+      fontSize: 15,
+      fontWeight: '600',
+    },
+    taskReorderMeta: {
+      fontSize: 12,
+    },
+    reorderHint: {
+      fontSize: 12,
+      marginBottom: 8,
     },
     taskActions: {
       flexDirection: 'row',

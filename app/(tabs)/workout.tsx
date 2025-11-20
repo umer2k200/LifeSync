@@ -8,6 +8,7 @@ import {
   Modal,
   TextInput,
 } from 'react-native';
+import DraggableFlatList from 'react-native-draggable-flatlist';
 import { useFocusEffect } from '@react-navigation/native';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -30,6 +31,8 @@ import {
   Edit2,
   History,
   Award,
+  GripVertical,
+  StickyNote,
 } from 'lucide-react-native';
 import { format } from 'date-fns';
 
@@ -48,6 +51,8 @@ interface Exercise {
   reps: number;
   weight: number;
   notes: string | null;
+  sort_order?: number | null;
+  created_at?: string;
 }
 
 interface WorkoutLog {
@@ -87,6 +92,7 @@ export default function WorkoutScreen() {
   const [exercises, setExercises] = useState<Exercise[]>([]);
   const [workoutLogs, setWorkoutLogs] = useState<WorkoutLog[]>([]);
   const [exerciseLogs, setExerciseLogs] = useState<ExerciseLog[]>([]);
+  const [reorderWorkoutId, setReorderWorkoutId] = useState<string | null>(null);
   const [meals, setMeals] = useState<Meal[]>([]);
   // View session logs modal
   const [viewLogVisible, setViewLogVisible] = useState(false);
@@ -130,6 +136,17 @@ export default function WorkoutScreen() {
   const [mealTimeText, setMealTimeText] = useState('06:00');
   const [loading, setLoading] = useState(true);
 
+  const sortExercisesList = useCallback((list: Exercise[]) => {
+    return [...list].sort((a, b) => {
+      const orderA = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+      const orderB = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) return orderA - orderB;
+      const createdA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const createdB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return createdA - createdB;
+    });
+  }, []);
+
   useEffect(() => {
     if (user) {
       loadData();
@@ -163,7 +180,11 @@ export default function WorkoutScreen() {
       const [workoutsData, exercisesData, logsData, exerciseLogsData, mealsData] =
         await Promise.all([
         SyncService.fetchWithFallback<Workout>('workouts', user.id),
-        SyncService.fetchWithFallback<Exercise>('exercises', user.id),
+        SyncService.fetchWithFallback<Exercise>('exercises', user.id, (q: any) =>
+          q.order('sort_order', { ascending: true, nullsLast: true }).order('created_at', {
+            ascending: true,
+          })
+        ),
         SyncService.fetchWithFallback<WorkoutLog>('workout_logs', user.id),
         SyncService.fetchWithFallback<ExerciseLog>('exercise_logs', user.id),
         SyncService.fetchWithFallback<Meal>('meals', user.id, (q: any) =>
@@ -171,7 +192,7 @@ export default function WorkoutScreen() {
         ),
       ]);
       setWorkouts(workoutsData);
-      setExercises(exercisesData);
+      setExercises(sortExercisesList(exercisesData));
       setWorkoutLogs(logsData);
       setExerciseLogs(exerciseLogsData);
       setMeals(mealsData);
@@ -261,7 +282,7 @@ export default function WorkoutScreen() {
       return;
     }
 
-    const exerciseData = {
+    const exerciseData: any = {
       workout_id: selectedWorkoutId,
       name: exerciseName.trim(),
       sets: parseInt(exerciseSets) || 3,
@@ -272,6 +293,11 @@ export default function WorkoutScreen() {
     if (editExerciseId) {
       await SyncService.updateWithFallback('exercises', user.id, editExerciseId, exerciseData);
     } else {
+      const nextOrder =
+        exercises
+          .filter((ex) => ex.workout_id === selectedWorkoutId)
+          .reduce((max, ex) => Math.max(max, ex.sort_order ?? -1), -1) + 1;
+      exerciseData.sort_order = nextOrder;
       await SyncService.insertWithFallback('exercises', user.id, exerciseData);
     }
 
@@ -351,7 +377,7 @@ export default function WorkoutScreen() {
   // Workout session functions
   const startWorkout = async (workoutId: string) => {
     if (!user) return;
-    const workoutExercises = exercises.filter((ex) => ex.workout_id === workoutId);
+    const workoutExercises = getSortedExercisesForWorkout(workoutId);
     if (workoutExercises.length === 0) {
       showError('Error', 'This workout has no exercises. Add exercises first.');
       return;
@@ -380,9 +406,7 @@ export default function WorkoutScreen() {
 
   const getCurrentExercise = () => {
     if (!activeWorkout) return null;
-    const workoutExercises = exercises.filter(
-      (ex) => ex.workout_id === activeWorkout.workoutId
-    );
+    const workoutExercises = getSortedExercisesForWorkout(activeWorkout.workoutId);
     return workoutExercises[activeWorkout.currentExerciseIndex] || null;
   };
 
@@ -488,9 +512,7 @@ export default function WorkoutScreen() {
     const currentExercise = getCurrentExercise();
     if (!currentExercise) return;
 
-    const workoutExercises = exercises.filter(
-      (ex) => ex.workout_id === activeWorkout.workoutId
-    );
+    const workoutExercises = getSortedExercisesForWorkout(activeWorkout.workoutId);
 
     // Check if we're done with all sets for current exercise
     if (activeWorkout.currentSet >= currentExercise.sets) {
@@ -516,9 +538,7 @@ export default function WorkoutScreen() {
 
   const skipToNextExercise = () => {
     if (!activeWorkout) return;
-    const workoutExercises = exercises.filter(
-      (ex) => ex.workout_id === activeWorkout.workoutId
-    );
+    const workoutExercises = getSortedExercisesForWorkout(activeWorkout.workoutId);
     if (activeWorkout.currentExerciseIndex < workoutExercises.length - 1) {
       setActiveWorkout({
         ...activeWorkout,
@@ -627,7 +647,7 @@ export default function WorkoutScreen() {
     const relevantWorkoutLogs = workoutLogs
       .filter((log) => {
         // Check if any exercise in this workout matches
-        const workoutExercises = exercises.filter((ex) => ex.workout_id === log.workout_id);
+        const workoutExercises = getSortedExercisesForWorkout(log.workout_id);
         return workoutExercises.some((ex) => ex.id === exerciseId);
       })
       .sort((a, b) => new Date(b.completed_at).getTime() - new Date(a.completed_at).getTime());
@@ -703,6 +723,46 @@ export default function WorkoutScreen() {
       logs.some((log) => log.id === el.workout_log_id)
     );
     return { totalWorkouts, exerciseLogsForWorkout };
+  };
+
+  const getSortedExercisesForWorkout = useCallback(
+    (workoutId: string) => {
+      return sortExercisesList(exercises.filter((ex) => ex.workout_id === workoutId));
+    },
+    [exercises, sortExercisesList]
+  );
+
+  const updateExerciseOrderState = (workoutId: string, orderedList: Exercise[]) => {
+    setExercises((prev) => {
+      const orderMap = new Map<string, number>();
+      orderedList.forEach((exercise, index) => orderMap.set(exercise.id, index));
+      const updated = prev.map((exercise) => {
+        if (exercise.workout_id !== workoutId) return exercise;
+        const newOrder = orderMap.get(exercise.id);
+        return newOrder !== undefined ? { ...exercise, sort_order: newOrder } : exercise;
+      });
+      return sortExercisesList(updated);
+    });
+  };
+
+  const handleExerciseReorder = async (workoutId: string, orderedList: Exercise[]) => {
+    if (!user) return;
+    updateExerciseOrderState(workoutId, orderedList);
+    try {
+      await Promise.all(
+        orderedList.map((exercise, index) =>
+          SyncService.updateWithFallback('exercises', user.id, exercise.id, { sort_order: index })
+        )
+      );
+    } catch (error) {
+      console.error('Error reordering exercises:', error);
+      showError('Error', 'Failed to reorder exercises. Please try again.');
+      loadData();
+    }
+  };
+
+  const toggleWorkoutReorder = (workoutId: string) => {
+    setReorderWorkoutId((prev) => (prev === workoutId ? null : workoutId));
   };
 
   const getExerciseProgress = (exerciseId: string) => {
@@ -826,8 +886,8 @@ export default function WorkoutScreen() {
                   </View>
                   <View style={styles.progressBar}>
                     {(() => {
-                      const workoutExercises = exercises.filter(
-                        (ex) => ex.workout_id === activeWorkout.workoutId
+                      const workoutExercises = getSortedExercisesForWorkout(
+                        activeWorkout.workoutId
                       );
                       const totalExercises = workoutExercises.length;
                       const completedExercises = activeWorkout.currentExerciseIndex;
@@ -844,7 +904,7 @@ export default function WorkoutScreen() {
                   </View>
                   <Text style={[styles.progressTextHeader, { color: colors.textSecondary }]}>
                     Exercise {activeWorkout.currentExerciseIndex + 1} of{' '}
-                    {exercises.filter((ex) => ex.workout_id === activeWorkout.workoutId).length}
+                    {getSortedExercisesForWorkout(activeWorkout.workoutId).length}
                   </Text>
                 </Card>
 
@@ -853,9 +913,7 @@ export default function WorkoutScreen() {
                   const currentExercise = getCurrentExercise();
                   if (!currentExercise) return null;
 
-                  const workoutExercises = exercises.filter(
-                    (ex) => ex.workout_id === activeWorkout.workoutId
-                  );
+                  const workoutExercises = getSortedExercisesForWorkout(activeWorkout.workoutId);
                   const exerciseSets = completedSets[currentExercise.id] || [];
                   const currentSetReps = getCurrentSetReps();
                   const currentSetWeight = exerciseSets[activeWorkout.currentSet - 1]?.weight || 0;
@@ -997,8 +1055,7 @@ export default function WorkoutScreen() {
                 {/* Next Exercises Preview */}
                 <Card style={styles.upcomingExercisesCard}>
                   <Text style={[styles.upcomingTitle, { color: colors.text }]}>Upcoming</Text>
-                  {exercises
-                    .filter((ex) => ex.workout_id === activeWorkout.workoutId)
+                  {getSortedExercisesForWorkout(activeWorkout.workoutId)
                     .slice(activeWorkout.currentExerciseIndex + 1, activeWorkout.currentExerciseIndex + 4)
                     .map((exercise, idx) => (
                       <View key={exercise.id} style={styles.upcomingExerciseItem}>
@@ -1010,7 +1067,7 @@ export default function WorkoutScreen() {
                         </Text>
                       </View>
                     ))}
-                  {exercises.filter((ex) => ex.workout_id === activeWorkout.workoutId).length <=
+                  {getSortedExercisesForWorkout(activeWorkout.workoutId).length <=
                     activeWorkout.currentExerciseIndex + 1 && (
                     <Text style={[styles.finishText, { color: colors.success }]}>
                       🎉 You&apos;re on the last exercise!
@@ -1039,10 +1096,9 @@ export default function WorkoutScreen() {
                   </Card>
                 ) : (
                   workouts.map((workout) => {
-                    const workoutExercises = exercises.filter(
-                      (ex) => ex.workout_id === workout.id
-                    );
+                    const workoutExercises = getSortedExercisesForWorkout(workout.id);
                     const stats = getWorkoutStats(workout.id);
+                    const isReordering = reorderWorkoutId === workout.id;
                     return (
                       <Card key={workout.id} style={styles.workoutCard}>
                         <View style={styles.workoutHeader}>
@@ -1078,68 +1134,148 @@ export default function WorkoutScreen() {
                             >
                               <Trash2 size={18} color={colors.error} />
                             </TouchableOpacity>
+                            <TouchableOpacity
+                              style={[
+                                styles.actionButton,
+                                {
+                                  backgroundColor: isReordering ? colors.primary + '20' : colors.border,
+                                },
+                              ]}
+                              onPress={() => toggleWorkoutReorder(workout.id)}
+                            >
+                              <GripVertical
+                                size={18}
+                                color={isReordering ? colors.primary : colors.textSecondary}
+                              />
+                            </TouchableOpacity>
                           </View>
                         </View>
 
+                        {workout.description ? (
+                          <View
+                            style={[
+                              styles.workoutNotesCard,
+                              { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' },
+                            ]}
+                          >
+                            <View style={styles.workoutNotesHeader}>
+                              <StickyNote size={16} color={colors.primary} />
+                              <Text style={[styles.workoutNotesTitle, { color: colors.primary }]}>
+                                Notes & Tips
+                              </Text>
+                            </View>
+                            <Text style={[styles.workoutNotesText, { color: colors.text }]}>
+                              {workout.description}
+                            </Text>
+                          </View>
+                        ) : (
+                          <TouchableOpacity
+                            style={[
+                              styles.workoutNotesCard,
+                              { backgroundColor: colors.surface, borderColor: colors.border },
+                            ]}
+                            onPress={() => openEditWorkoutModal(workout)}
+                          >
+                            <Text style={[styles.workoutNotesTitle, { color: colors.textSecondary }]}>
+                              Add notes or tips for this workout
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+
                         {workoutExercises.length > 0 && (
                           <View style={styles.exercisesList}>
-                            {workoutExercises.map((exercise) => {
-                              const progress = getExerciseProgress(exercise.id);
-                              const pr = getExercisePR(exercise.id);
-                              const history = getExerciseHistory(exercise.id);
-                              
-                              return (
-                                <View key={exercise.id} style={styles.exerciseItem}>
-                                  <TouchableOpacity
-                                    style={{ flex: 1 }}
-                                    onPress={() => openExerciseHistory(exercise.id)}
-                                    activeOpacity={0.7}
-                                  >
-                                    <View style={{ flex: 1 }}>
-                                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                            {isReordering ? (
+                              <>
+                                <Text style={[styles.reorderHint, { color: colors.textSecondary }]}>
+                                  Long press and drag exercises to reorder. Tap the handle icon again when finished.
+                                </Text>
+                                <DraggableFlatList
+                                  data={workoutExercises}
+                                  keyExtractor={(item) => item.id}
+                                  scrollEnabled={false}
+                                  onDragEnd={({ data }) => handleExerciseReorder(workout.id, data)}
+                                  renderItem={({ item, drag, isActive }) => (
+                                    <TouchableOpacity
+                                      style={[
+                                        styles.exerciseReorderItem,
+                                        { backgroundColor: colors.surface, borderColor: colors.border },
+                                        isActive && { backgroundColor: colors.primary + '15', borderColor: colors.primary },
+                                      ]}
+                                      onLongPress={drag}
+                                      activeOpacity={0.9}
+                                    >
+                                      <GripVertical size={16} color={colors.textSecondary} />
+                                      <View style={{ flex: 1 }}>
                                         <Text style={[styles.exerciseItemName, { color: colors.text }]}>
-                                          {exercise.name}
+                                          {item.name}
                                         </Text>
+                                        <Text style={[styles.exerciseItemDetails, { color: colors.textSecondary }]}>
+                                          {item.sets} sets × {item.reps} reps
+                                        </Text>
+                                      </View>
+                                    </TouchableOpacity>
+                                  )}
+                                />
+                              </>
+                            ) : (
+                              workoutExercises.map((exercise) => {
+                                const progress = getExerciseProgress(exercise.id);
+                                const pr = getExercisePR(exercise.id);
+                                const history = getExerciseHistory(exercise.id);
+                                
+                                return (
+                                  <View key={exercise.id} style={styles.exerciseItem}>
+                                    <TouchableOpacity
+                                      style={{ flex: 1 }}
+                                      onPress={() => openExerciseHistory(exercise.id)}
+                                      activeOpacity={0.7}
+                                    >
+                                      <View style={{ flex: 1 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                          <Text style={[styles.exerciseItemName, { color: colors.text }]}>
+                                            {exercise.name}
+                                          </Text>
+                                        </View>
                                         {pr && (
-                                          <View style={[styles.prBadge, { backgroundColor: colors.primary + '20' }]}>
+                                          <View style={styles.prInfoRow}>
                                             <Award size={12} color={colors.primary} />
-                                            <Text style={[styles.prBadgeText, { color: colors.primary }]}>
-                                              PR: {pr.maxWeight}kg
+                                            <Text style={[styles.prInfoText, { color: colors.primary }]}>
+                                              Max {pr.maxWeight}kg • {pr.maxRepsAtWeight || pr.maxReps} reps
                                             </Text>
                                           </View>
                                         )}
+                                        <Text style={[styles.exerciseItemDetails, { color: colors.textSecondary }]}>
+                                          {exercise.sets} sets × {exercise.reps} reps
+                                          {history.length > 0 && ` • ${history.length} sessions`}
+                                        </Text>
                                       </View>
-                                      <Text style={[styles.exerciseItemDetails, { color: colors.textSecondary }]}>
-                                        {exercise.sets} sets × {exercise.reps} reps
-                                        {history.length > 0 && ` • ${history.length} sessions`}
-                                      </Text>
-                                    </View>
-                                  </TouchableOpacity>
-                                  {progress && progress.improvement > 0 && (
-                                    <View style={styles.progressBadge}>
-                                      <TrendingUp size={14} color={colors.success} />
-                                      <Text style={[styles.progressTextSmall, { color: colors.success }]}>
-                                        +{progress.improvement.toFixed(0)}
-                                      </Text>
-                                    </View>
-                                  )}
-                                  <View style={styles.exerciseActions}>
-                                    <TouchableOpacity
-                                      style={[styles.actionButtonSmall, { backgroundColor: colors.primary + '20' }]}
-                                      onPress={() => openEditExerciseModal(exercise)}
-                                    >
-                                      <Edit2 size={14} color={colors.primary} />
                                     </TouchableOpacity>
-                                    <TouchableOpacity
-                                      style={[styles.actionButtonSmall, { backgroundColor: colors.error + '20' }]}
-                                      onPress={() => deleteExercise(exercise.id)}
-                                    >
-                                      <X size={14} color={colors.error} />
-                                    </TouchableOpacity>
+                                    {progress && progress.improvement > 0 && (
+                                      <View style={styles.progressBadge}>
+                                        <TrendingUp size={14} color={colors.success} />
+                                        <Text style={[styles.progressTextSmall, { color: colors.success }]}>
+                                          +{progress.improvement.toFixed(0)}
+                                        </Text>
+                                      </View>
+                                    )}
+                                    <View style={styles.exerciseActions}>
+                                      <TouchableOpacity
+                                        style={[styles.actionButtonSmall, { backgroundColor: colors.primary + '20' }]}
+                                        onPress={() => openEditExerciseModal(exercise)}
+                                      >
+                                        <Edit2 size={14} color={colors.primary} />
+                                      </TouchableOpacity>
+                                      <TouchableOpacity
+                                        style={[styles.actionButtonSmall, { backgroundColor: colors.error + '20' }]}
+                                        onPress={() => deleteExercise(exercise.id)}
+                                      >
+                                        <X size={14} color={colors.error} />
+                                      </TouchableOpacity>
+                                    </View>
                                   </View>
-                                </View>
-                              );
-                            })}
+                                );
+                              })
+                            )}
                           </View>
                         )}
 
@@ -1666,6 +1802,49 @@ const createStyles = (colors: any) =>
     },
     exerciseItemDetails: {
       fontSize: 12,
+    },
+    prInfoRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 6,
+    },
+    prInfoText: {
+      fontSize: 12,
+      fontWeight: '600',
+    },
+    workoutNotesCard: {
+      borderWidth: 1,
+      borderRadius: 12,
+      padding: 12,
+      marginBottom: 12,
+    },
+    workoutNotesHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 4,
+    },
+    workoutNotesTitle: {
+      fontSize: 13,
+      fontWeight: '700',
+    },
+    workoutNotesText: {
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    exerciseReorderItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 12,
+      padding: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      marginBottom: 12,
+    },
+    reorderHint: {
+      fontSize: 12,
+      marginBottom: 12,
     },
     progressBadge: {
       flexDirection: 'row',
